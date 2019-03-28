@@ -81,7 +81,6 @@ bool WebUI::runWebserver( void * pvParameters ) {
     delay(100);
   }
 #endif
-
 }
 
 void WebUI::setup() {

@@ -83,3 +83,83 @@ bool WebUI::runWebserver( void * pvParameters ) {
 #endif
 
 }
+
+void WebUI::setup() {
+	  ArduinoOTA
+  .onStart([]() {
+    String type;
+    otaProgress = 0;
+    otaTotal = 0;
+    Serial.println("onStart OTA.");
+    otaMessage = "Starting upload";
+    inSetup = true;
+    timerAlarmDisable(timer);
+    if (ArduinoOTA.getCommand() == U_FLASH)
+      type = "sketch";
+    else // U_SPIFFS
+      type = "filesystem";
+
+    // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+    otaMessage = "Upload of " + type + " started.";
+    Serial.println("Start updating " + type);
+  })
+  .onEnd([]() {
+    inSetup = false;
+    ArduinoOTA.end();
+    timerAlarmEnable(timer);
+    otaMessage = "Upload completed.";
+    Serial.println("\nonEnd");
+  })
+  .onProgress([](unsigned int progress, unsigned int total) {
+    otaProgress = progress;
+    otaTotal = total;
+    otaMessage = "Progress: " + (String) (progress / (total / 100) + "%");
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  })
+  .onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    ArduinoOTA.end();
+    timerAlarmEnable(timer);
+    inSetup = false;
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+      otaMessage = "Auth Failed";
+    }
+    else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+      otaMessage = "Begin Failed";
+    }
+    else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+      otaMessage = "Connect Failed";
+    }
+    else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+      otaMessage = "Receive Failed.";
+    }
+    else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+      otaMessage = "End Failed.";
+    } else {
+      Serial.print("Unknown error" );
+      otaMessage = "Unknown error: " + (String) error;
+    }
+  });
+
+#if WEBSERVER_TASK_CORE == 0
+    xTaskCreatePinnedToCore(
+      runWebserver,   /* Function to implement the task */
+      "Webserver", /* Name of the task */
+      10000,      /* Stack size in words */
+      NULL,       /* Task input parameter */
+      0,          /* Priority of the task */
+      NULL,       /* Task handle. */
+      0);  /* Core where the task should run */
+#else
+    runWebserver( NULL );
+#endif
+}
+
+void WebUI::loop() {
+	
+}

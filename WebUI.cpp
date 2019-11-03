@@ -44,7 +44,7 @@ const char jquery[] = "<link rel=\"stylesheet\" href=\"http://code.jquery.com/mo
 
 const char *myHostname = "esp32";
 
-WebServer WebUI::server(80);
+WebServer *WebUI::server;
 DNSServer WebUI::dnsServer;
 MqttClient *WebUI::mqtt;
 WiFiClient WebUI::network;
@@ -178,26 +178,32 @@ void WebUI::runWebserver( void * pvParameters ) {
   taskMessage = taskMessage + xPortGetCoreID();
   Serial.println(taskMessage);
 
-  server.on("/", handleRoot );
-  server.on("/wifi", handleWiFiSetupForm);
-  server.on("/setParams", handleSetWiFiParams);
-  server.on("/getData", handleGetData);
-  server.on("/configMqttForm", handleMqttForm);
-  server.on("/configMqtt", handleConfigMqtt);
-  server.on("/otaActivateForm", otaActivateForm);
-  server.on("/otaStart", otaStart);
-  server.on("/getOTAStatus", handleGetOTAStatus);
-  server.on("/fwupload", HTTP_GET, handleFwUpload);
+//  server->on("/", handleRoot );
+  on("/", handleRoot );
+  on("/wifi", handleWiFiSetupForm);
+  on("/setParams", handleSetWiFiParams);
+  on("/getData", handleGetData);
+  on("/configMqttForm", handleMqttForm);
+  on("/configMqtt", handleConfigMqtt);
+  on("/otaActivateForm", otaActivateForm);
+  on("/otaStart", otaStart);
+  on("/getOTAStatus", handleGetOTAStatus);
+  on("/fwupload", HTTP_GET, handleFwUpload);
+  on("/espreset", ESPrestart);
+  on("/generate_204", handleRoot);  //Android captive portal. Maybe not needed. Might be handled by notFound handler.
+  on("/fwlink", handleRoot);  //Microsoft captive portal. Maybe not needed. Might be handled by notFound handler.
+  onNotFound(handleNotFound);
   /*handling uploading firmware file */
-  server.on("/update", HTTP_POST, [&]() {
-    server.sendHeader("Connection", "close");
-    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+  WebServer::on("/update", HTTP_POST, [&]() {
+	  //  server->sendHeader("Connection", "close");
+    sendHeader("Connection", "close");
+    send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
     Serial.printf("Update return status: %s\n" , (Update.hasError()) ? "FAIL" : "OK");
     inSetup = false;
     ESP.restart();
   }, [&]() {
     inSetup = true;
-    HTTPUpload& upload = server.upload();
+    HTTPUpload& upload = this->upload();
     if (upload.status == UPLOAD_FILE_START) {
       Serial.printf("Upload: %s\nSize: %d\n", upload.filename.c_str(), upload.currentSize);
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { //start with max available size
@@ -224,17 +230,14 @@ void WebUI::runWebserver( void * pvParameters ) {
       Serial.printf("Update unexpected status %d.", upload.status);
     }
   });
-  server.on("/espreset", ESPrestart);
-  server.on("/generate_204", handleRoot);  //Android captive portal. Maybe not needed. Might be handled by notFound handler.
-  server.on("/fwlink", handleRoot);  //Microsoft captive portal. Maybe not needed. Might be handled by notFound handler.
-  server.onNotFound(handleNotFound);
   
+
   //here the list of headers to be recorded
   //  const char * headerkeys[] = {"User-Agent", "Cookie"} ;
   //  size_t headerkeyssize = sizeof(headerkeys) / sizeof(char*);
   //ask server to track these headers
-  //  server.collectHeaders(headerkeys, headerkeyssize );
-  server.begin();
+  //  collectHeaders(headerkeys, headerkeyssize );
+  begin();
   Serial.println("HTTP server started");
 
 #if WEBSERVER_TASK_CORE == 0
@@ -242,7 +245,7 @@ void WebUI::runWebserver( void * pvParameters ) {
     TIMG_WDT_WKEY_VALUE;
     TIMERG1.wdt_feed = 1;
     TIMERG1.wdt_wprotect = 0;
-    server.handleClient();
+    handleClient();
     ArduinoOTA.handle();
     //delay(100);
     vTaskDelay(20 / portTICK_PERIOD_MS);
@@ -260,7 +263,6 @@ void WebUI::setup() {
 #ifdef WEBUI_USE_BUILDIN_STATUS
   sprintf(MQTT_TOPIC_STATUS, "actors/%s-0/status", mqttid);
 #endif
-
   loadConfigFromEEPROM();
   if ( strlen(ssid) == 0 ) {
     Serial.println("No WLAN settings found. Start AP mode");
@@ -350,7 +352,7 @@ void WebUI::setup() {
     // Start an alarm
     Serial.println("Enable timer...");
     timerAlarmEnable(timer);
-
+    server = this;
   if (!wifiAPmode) {
 #if WEBSERVER_TASK_CORE == 0
     xTaskCreatePinnedToCore(
@@ -429,6 +431,11 @@ void WebUI::loop() {
             options.clientID.cstring = mqttid;
             options.cleansession = true;
             options.keepAliveInterval = 15; // 15 seconds
+            char lastwill[64];
+            sprintf(lastwill, "/homie/%s/$state", mqttid);
+            options.willFlag = '1';
+            options.will.topicName.cstring = lastwill;
+            options.will.message.cstring = "lost";
             Serial.println("Establish MQTT connection...");
             MqttClient::Error::type rc = mqtt->connect(options, connectResult);
             if (rc != MqttClient::Error::SUCCESS) {
@@ -442,18 +449,8 @@ void WebUI::loop() {
           {
             // Add subscribe here if required
             // Subscribe
-            logfln("Subscribe to %s", MQTT_TOPIC_CONFIG_REQ);
-            MqttClient::Error::type rc = mqtt->subscribe(
-                                           MQTT_TOPIC_CONFIG_REQ, MqttClient::QOS0, processConfigRequest
-                                         );
-            if (rc != MqttClient::Error::SUCCESS) {
-              logfln("Subscribe error: %i", rc);
-              Serial.println("Drop connection");
-              mqtt->disconnect();
-              return;
-            } else {
-              logfln("Subscribtion to %s successful.", MQTT_TOPIC_CONFIG_REQ);
-            }
+        	mqttSubscribe();
+        	homieSubscribe();
 			
 			if(subscribeCB) {
 				Serial.println("Now processing subscribe callback.");
@@ -475,16 +472,16 @@ void WebUI::loop() {
     dnsServer.processNextRequest();	
   checkInterrupt();
 #if WEBSERVER_TASK_CORE == 1
-  server.handleClient();
+  handleClient();
   ArduinoOTA.handle();
 #endif
 }
 
 bool WebUI::isAuthentified() {
   Serial.println("Enter is_authentified");
-  if (server.hasHeader("Cookie")) {
+  if (server->hasHeader("Cookie")) {
     Serial.print("Found cookie: ");
-    String cookie = server.header("Cookie");
+    String cookie = server->header("Cookie");
     Serial.println(cookie);
     if (cookie.indexOf("ESPSESSIONID=1") != -1) {
       Serial.println("Authentification Successful");
@@ -498,25 +495,25 @@ bool WebUI::isAuthentified() {
 //login page, also called for disconnect
 void WebUI::handleLogin() {
   String msg;
-  if (server.hasHeader("Cookie")) {
+  if (server->hasHeader("Cookie")) {
     Serial.print("Found cookie: ");
-    String cookie = server.header("Cookie");
+    String cookie = server->header("Cookie");
     Serial.println(cookie);
   }
-  if (server.hasArg("DISCONNECT")) {
+  if (server->hasArg("DISCONNECT")) {
     Serial.println("Disconnection");
-    server.sendHeader("Location", "/login");
-    server.sendHeader("Cache-Control", "no-cache");
-    server.sendHeader("Set-Cookie", "ESPSESSIONID=0");
-    server.send(301);
+    server->sendHeader("Location", "/login");
+    server->sendHeader("Cache-Control", "no-cache");
+    server->sendHeader("Set-Cookie", "ESPSESSIONID=0");
+    server->send(301);
     return;
   }
-  if (server.hasArg("USERNAME") && server.hasArg("PASSWORD")) {
-    if (server.arg("USERNAME") == "admin" &&  server.arg("PASSWORD") == "admin" ) {
-      server.sendHeader("Location", "/");
-      server.sendHeader("Cache-Control", "no-cache");
-      server.sendHeader("Set-Cookie", "ESPSESSIONID=1");
-      server.send(301);
+  if (server->hasArg("USERNAME") && server->hasArg("PASSWORD")) {
+    if (server->arg("USERNAME") == "admin" &&  server->arg("PASSWORD") == "admin" ) {
+      server->sendHeader("Location", "/");
+      server->sendHeader("Cache-Control", "no-cache");
+      server->sendHeader("Set-Cookie", "ESPSESSIONID=1");
+      server->send(301);
       Serial.println("Log in Successful");
       return;
     }
@@ -528,7 +525,7 @@ void WebUI::handleLogin() {
   content += "Password:<input type='password' name='PASSWORD' placeholder='password'><br>";
   content += "<input type='submit' name='SUBMIT' value='Submit'></form>" + msg + "<br>";
   content += "You also can go <a href='/inline'>here</a></body></html>";
-  server.send(200, "text/html", content);
+  server->send(200, "text/html", content);
 }
 
 /** Handle root or redirect to captive portal */
@@ -538,10 +535,10 @@ void WebUI::handleRoot() {
   if (WebUI::captivePortal()) { // If caprive portal redirect instead of displaying the page.
     return;
   }
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server.sendHeader("Pragma", "no-cache");
-  server.sendHeader("Expires", "-1");
-  server.sendHeader("Connection", "close");
+  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server->sendHeader("Pragma", "no-cache");
+  server->sendHeader("Expires", "-1");
+  server->sendHeader("Connection", "close");
   out += "<!doctype html><html><head><title>ESP32 Tank Level Pump Control</title>\n";
   out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
   out += jquery;
@@ -605,7 +602,7 @@ void WebUI::handleRoot() {
   out += "<h1>ESP32 Tank Level Pump Control</h1>";
   out += "<table><tr><td>chipid:</td><td>" + String(mqttid) + "</td></tr>";
   out += "<tr><td>Firmware:</td><td>" + String(firmwareMajor) + "." + String(firmwareMinor) + "</td></tr>";
-  if (server.client().localIP() == apIP) {
+  if (server->client().localIP() == apIP) {
     out += "<tr><td>Soft AP:</td><td>" + String(ssid) + "</td></tr>";
   } else {
     out += "<tr><td>wifi connection:</td><td>" + String(ssid) + "</td></tr>";
@@ -622,16 +619,16 @@ void WebUI::handleRoot() {
   out += "</table > ";
 
   out += "<p>You may want to </p> <p><a href = '/wifi'>config the wifi connection</a>.</p><p><a href='/configMqttForm'>config the MQTT broker connection </a></p><p><a href='/thresholdConfig'>configure pump thresholds </a></p><p><a href = '/otaActivateForm'>update firmware</a></p><p><a href='/fwupload'>upload firmware</a></p><p><a href='/espreset'>Reset the thing</a>.</p></body></html>";
-  server.send(200, "text/html", out);
+  server->send(200, "text/html", out);
 }
 
 boolean WebUI::captivePortal() {
-  if (!isIp(server.hostHeader()) && server.hostHeader() != (String(myHostname) + ".local")) {
+  if (!isIp(server->hostHeader()) && server->hostHeader() != (String(myHostname) + ".local")) {
     String out = "";
     Serial.print("Request redirected to captive portal");
-    server.sendHeader("Location", String("http://") + toStringIp(server.client().localIP()), true);
-    server.send ( 302, "text/plain", ""); // Empty content inhibits Content-length header so we have to close the socket ourselves.
-    //    server.client().stop(); // Stop is needed because we sent no content length
+    server->sendHeader("Location", String("http://") + toStringIp(server->client().localIP()), true);
+    server->send ( 302, "text/plain", ""); // Empty content inhibits Content-length header so we have to close the socket ourselves.
+    //    server->client().stop(); // Stop is needed because we sent no content length
     return true;
   }
   Serial.print("No captive portal");
@@ -639,12 +636,12 @@ boolean WebUI::captivePortal() {
 }
 
 void WebUI::handleGetData() {
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server.sendHeader("Pragma", "no-cache");
-  server.sendHeader("Connection", "close");
+  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server->sendHeader("Pragma", "no-cache");
+  server->sendHeader("Connection", "close");
   batteryLevel = map(analogRead(33), 0.0f, 4095.0f, 0, 100);
   batteryV = 3.3/4096*(float) analogRead(33); // map((float) analogRead(33), 0.0f, 4095.0f,0, 3.7f);
-  server.send(200, "text/json",
+  server->send(200, "text/json",
               "{\"insetup\":" + (String) inSetup +
               ",\"wifiapmode\":" + (String) wifiAPmode +
               ",\"network\":" + network.connected() +
@@ -662,25 +659,25 @@ void WebUI::handleNotFound() {
   }
   String message = "File Not Found\n\n";
   message += "URI: ";
-  message += server.uri();
+  message += server->uri();
   message += "\nMethod: ";
-  message += ( server.method() == HTTP_GET ) ? "GET" : "POST";
+  message += ( server->method() == HTTP_GET ) ? "GET" : "POST";
   message += "\nArguments: ";
-  message += server.args();
+  message += server->args();
   message += "\n";
 
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    message += " " + server.argName ( i ) + ": " + server.arg ( i ) + "\n";
+  for ( uint8_t i = 0; i < server->args(); i++ ) {
+    message += " " + server->argName ( i ) + ": " + server->arg ( i ) + "\n";
   }
-  server.sendHeader("Cache - Control", "no - cache, no - store, must - revalidate");
-  server.sendHeader("Pragma", "no - cache");
-  server.sendHeader("Expires", " - 1");
-  server.send ( 404, "text / plain", message );
+  server->sendHeader("Cache - Control", "no - cache, no - store, must - revalidate");
+  server->sendHeader("Pragma", "no - cache");
+  server->sendHeader("Expires", " - 1");
+  server->send ( 404, "text / plain", message );
 }
 
 void WebUI::handleWiFiSetupForm() {
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server.sendHeader("Pragma", "no-cache");
+  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server->sendHeader("Pragma", "no-cache");
   String out = "<!doctype html><html><head><title>ESP32 Tank Controller - WIFI Setup</title></head><body>";
   out += skeleton;
   out += "<form action = '/setParams' method = 'POST'>Please select SSID and provide WIFI password<br>";
@@ -711,27 +708,29 @@ void WebUI::handleWiFiSetupForm() {
 
   out += "</select><br>";
   out += "Password:<input type='password' name='PASSWORD' placeholder='password'><br>";
-  out += "<input type='submit' name='SUBMIT' value='Submit'></form><button onclick=\"history.go(-1);\">Go back</button><br></body></html>";
-  server.send(200, "text/html", out);
+  out += "<input class='button-primary' type='submit' name='SUBMIT' value='Submit'><button class='button-primary' onclick=\"history.go(-1);\">Go back</button></form></body></html>";
+  server->send(200, "text/html", out);
 }
 
 void WebUI::handleSetWiFiParams() {
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server.sendHeader("Pragma", "no-cache");
-  server.sendHeader("Connection", "close");
-  String out = "<html><body><body><form action='/' method='POST'>Setting parameters and switching to WIFI client.<br>";
-  for (uint8_t i = 0; i < server.args(); i++) {
-    if ( server.argName(i) == "USERID" ) {
-      strcpy( ssid, server.arg(i).c_str() );
+  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server->sendHeader("Pragma", "no-cache");
+  server->sendHeader("Connection", "close");
+  String out = "<html><body>";
+  out += skeleton;
+  out += "<form action='/' method='POST'>Setting parameters and switching to WIFI client.<br>";
+  for (uint8_t i = 0; i < server->args(); i++) {
+    if ( server->argName(i) == "USERID" ) {
+      strcpy( ssid, server->arg(i).c_str() );
     }
-    if (server.argName(i) == "PASSWORD" ) {
-      strcpy( password, server.arg(i).c_str() );
+    if (server->argName(i) == "PASSWORD" ) {
+      strcpy( password, server->arg(i).c_str() );
     }
   }
   out += "connect to ";
   out += (String) ssid + " with password ";
   out += (String) password + "<br><input type='submit' name='SUBMIT' value='Submit'></form></body></html>";
-  server.send(200, "text/html", out);
+  server->send(200, "text/html", out);
 //  saveCredentials();
   Serial.print( "Attempting to connect to ");
   Serial.print( ssid );
@@ -749,26 +748,28 @@ void WebUI::handleSetWiFiParams() {
 }
 
 void WebUI::handleMqttForm () {
-  String out = "<!doctype html><html><body><form action='/configMqtt' method='POST'>Please enter MQTT boker IP address and port<br>";
+  String out = "<!doctype html><html><body>";
+  out += skeleton;
+  out += "<form action='/configMqtt' method='POST'>Please enter MQTT boker IP address and port<br>";
   out += "MQTT ID / host name:<input type='text' name='mqttid' value='" + (String) mqttid + "'><br>";
   out += "Broker address:<input type='text' name='brokerip' value='" + (String) mqttBrokerIP[0] + "." + (String) mqttBrokerIP[1] + "." + (String) mqttBrokerIP[2] + "." + (String) mqttBrokerIP[3] + "'><br>";
   out += "Broker port:<input type='text' name='brokerport' value='" + (String) mqttBrokerPort + "'><br>";
-  out += "<input type='submit' name='SUBMIT' value='Submit'></form><button onclick=\"history.go(-1);\">Go back</button></body></html>";
-  server.send(200, "text/html", out);
+  out += "<input type='submit' name='SUBMIT' value='Submit'><button onclick=\"history.go(-1);\">Go back</button></form></body></html>";
+  server->send(200, "text/html", out);
 }
 
 void WebUI::handleConfigMqtt() {
   String out = "<html><body>";
-  for (uint8_t i = 0; i < server.args(); i++) {
-    if ( server.argName(i) == "brokerip" ) {
-      mqttBrokerIP.fromString(server.arg(i).c_str());
-      // strcpy( ssid, server.arg(i).c_str() );
+  for (uint8_t i = 0; i < server->args(); i++) {
+    if ( server->argName(i) == "brokerip" ) {
+      mqttBrokerIP.fromString(server->arg(i).c_str());
+      // strcpy( ssid, server->arg(i).c_str() );
     }
-    if (server.argName(i) == "brokerport" ) {
-      mqttBrokerPort = atoi( server.arg(i).c_str() );
+    if (server->argName(i) == "brokerport" ) {
+      mqttBrokerPort = atoi( server->arg(i).c_str() );
     }
-    if (server.argName(i) == "mqttid" ) {
-      strcpy( mqttid, server.arg(i).c_str() );
+    if (server->argName(i) == "mqttid" ) {
+      strcpy( mqttid, server->arg(i).c_str() );
     }
   }
   out += "Setting MQTT broker to ";
@@ -776,7 +777,7 @@ void WebUI::handleConfigMqtt() {
   out += (String) mqttBrokerIP[0] + "." + (String) mqttBrokerIP[1] + "." + (String) mqttBrokerIP[2] + "." + (String) mqttBrokerIP[3] + " with port ";
   out += (String) mqttBrokerPort + "<br>";
   out += "<a class=\"ui-button ui-widget ui-corner-all\" href='/'>Back to main menu</a></body></html>";
-  server.send(200, "text/html", out);
+  server->send(200, "text/html", out);
   saveCredentials();
   inSetup = 0;
   mqtt->disconnect();
@@ -786,13 +787,13 @@ void WebUI::otaActivateForm() {
   otaProgress = 0;
   otaTotal = 0;
   otaMessage = "Waiting...";
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server.sendHeader("Pragma", "no-cache");
-  server.sendHeader("Connection", "close");
+  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server->sendHeader("Pragma", "no-cache");
+  server->sendHeader("Connection", "close");
   String out = "<!doctype html><html><body><form action='/otaStart' method='POST'>Please press Button to activate OTA<br>";
   out += "<input type='text' name='brokerip' value='" + ArduinoOTA.getHostname() + "'><br>";
   out += "<input type='submit' name='SUBMIT' value='Start'></form><button onclick=\"history.go(-1);\">Go back</button></body></html>";
-  server.send(200, "text/html", out);
+  server->send(200, "text/html", out);
 }
 
 void WebUI::otaStart() {
@@ -800,9 +801,9 @@ void WebUI::otaStart() {
   ArduinoOTA.begin();
   otaMessage = "waiting.";
   Serial.println("Ready");
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server.sendHeader("Pragma", "no-cache");
-  server.sendHeader("Connection", "close");
+  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server->sendHeader("Pragma", "no-cache");
+  server->sendHeader("Connection", "close");
   inSetup = true;
   String out = "<!doctype html><html><head><title>OTA</title>";
   out += jquery;
@@ -827,15 +828,15 @@ void WebUI::otaStart() {
   out += "</head><body><form action='/' method='POST'>Hostname: " + ArduinoOTA.getHostname() + "<br>Now start uploading the firmware in Arduino IDE<br>";
   out += "Status: <div id='otastatus'>" + otaMessage + "</div><br>";
   out += "<input type='submit' name='SUBMIT' value='Click when finished'></form><br></body></html>";
-  server.send(200, "text/html", out);
+  server->send(200, "text/html", out);
 }
 
 void WebUI::handleGetOTAStatus() {
   Serial.println("handleGetOTAStatus");
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server.sendHeader("Pragma", "no-cache");
-  server.sendHeader("Connection", "close");
-  server.send(200, "text/json",
+  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server->sendHeader("Pragma", "no-cache");
+  server->sendHeader("Connection", "close");
+  server->send(200, "text/json",
               "{\"status\":\"" + (String) otaMessage + "\"}");
 }
 
@@ -844,8 +845,8 @@ void WebUI::ESPrestart() {
 }
 
 void WebUI::handleFwUpload() {
-    server.sendHeader("Connection", "close");
-    server.send(200, "text/html", serverIndexFWUpload);
+    server->sendHeader("Connection", "close");
+    server->send(200, "text/html", serverIndexFWUpload);
   };
   
 void WebUI::startAP() {
@@ -871,17 +872,51 @@ void WebUI::connectWIFI( int maxRetries, int connectionTimeout ) {
   Serial.println("connectWIFI");
   Serial.println(WiFi.status());
   Serial.println(WL_CONNECTED);
+  WiFi.disconnect();
+  WiFi.onEvent(WiFiEvent);
   for( int retries = 0; retries < maxRetries && WiFi.status() != WL_CONNECTED && !wifiAPmode; retries++ ) {
     Serial.println("WiFi.begin()");
     //    Serial.println("WiFi.disconnect()");
     //    WiFi.disconnect(true);
-    if( WiFi.begin ( ssid, password ) ) {
+    wl_status_t wifistatus = WiFi.begin ( ssid, password );
+
+    if( wifistatus ) {
       wifiAPmode = false;
       Serial.print ( "Connecting to " );
       Serial.println ( ssid );
 
       // Wait for connection
-      for( int i = 0; WiFi.status() != WL_CONNECTED && i < connectionTimeout; i++ ) {
+      for( int i = 0; wifistatus != WL_CONNECTED && wifistatus != WL_NO_SHIELD && i < connectionTimeout; i++ ) {
+    	  wifistatus = WiFi.status();
+    	    switch( wifistatus ) {
+    	    case WL_IDLE_STATUS:
+    	    	Serial.println("WL_IDLE_STATUS");
+    	    	break;
+    	    case WL_NO_SSID_AVAIL:
+    	    	Serial.println("WL_NO_SSID_AVAIL");
+    	    	break;
+    	    case WL_SCAN_COMPLETED:
+    	    	Serial.println("WL_SCAN_COMPLETED");
+    	    	break;
+    	    case WL_CONNECTED:
+    	    	Serial.println("WL_CONNECTED");
+    	    	break;
+    	    case WL_CONNECT_FAILED:
+    	    	Serial.println("WL_CONNECT_FAILED");
+    	    	break;
+    	    case WL_CONNECTION_LOST:
+    	    	Serial.println("WL_CONNECTION_LOST");
+    	    	break;
+    	    case WL_DISCONNECTED:
+    	    	Serial.println("WL_DISCONNECTED");
+    	    	break;
+    	    case WL_NO_SHIELD:
+    	    	Serial.println("WL_NO_SHIELD");
+    	    	break;
+    	    default:
+    	    	Serial.println("unknown WiFi return code.");
+    	    	break;
+    	    }
         checkInterrupt();
         //vTaskDelay(1000 / portTICK_RATE_MS);
         delay ( 1000 );
@@ -890,7 +925,8 @@ void WebUI::connectWIFI( int maxRetries, int connectionTimeout ) {
     } else {
       Serial.print( "Connecting to ");
       Serial.print( ssid );
-      Serial.print( " failed." );
+      Serial.print( " failed with error code " );
+      Serial.println(wifistatus);
     }
 
   }
@@ -1206,4 +1242,55 @@ void WebUI::setPublishCB(PublishHandlerCbk cb){
 SubscribeHandlerCbk WebUI::subscribeCB;
 void WebUI::setSubscribeCB(SubscribeHandlerCbk cb){
 	subscribeCB = cb;
+}
+
+void WebUI::mqttSubscribe() {
+    logfln("Subscribe to %s", MQTT_TOPIC_CONFIG_REQ);
+    MqttClient::Error::type rc = mqtt->subscribe(
+                                   MQTT_TOPIC_CONFIG_REQ, MqttClient::QOS0, processConfigRequest
+                                 );
+    if (rc != MqttClient::Error::SUCCESS) {
+      logfln("Subscribe error: %i", rc);
+      Serial.println("Drop connection");
+      mqtt->disconnect();
+      return;
+    } else {
+      logfln("Subscribtion to %s successful.", MQTT_TOPIC_CONFIG_REQ);
+    }
+}
+
+void WebUI::homieSubscribe() {
+    logfln("Subscribe to %s", "+/+/$homie");
+    MqttClient::Error::type rc = mqtt->subscribe(
+    		"+/+/$homie", MqttClient::QOS0, homieDiscoveryHandler
+                                 );
+    if (rc != MqttClient::Error::SUCCESS) {
+      logfln("Subscribe error: %i", rc);
+      Serial.println("Drop connection");
+      mqtt->disconnect();
+      return;
+    } else {
+      logfln("Subscribtion to %s successful.", "+/+/$homie");
+      // homieSendDiscoveryResponse();
+    }
+}
+void WebUI::homieDiscoveryHandler(MqttClient::MessageData & md) {
+	Serial.println("Shit, we got discovered!");
+}
+
+void WebUI::homieSendDiscoveryResponse() {
+	  char pubbuf[1024] = "";
+
+	  sprintf(pubbuf, "{'id':'%s','ngpio':%d,'naout':3,'ip':'%d.%d.%d.%d', 'mqttip':'%d.%d.%d.%d', 'mqttport':%d}", mqttid, GPIO_MAX, WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3], mqttBrokerIP[0], mqttBrokerIP[1], mqttBrokerIP[2], mqttBrokerIP[3], mqttBrokerPort);
+
+	  logfln("Publish %s to %s", pubbuf, "/+/+/homie");
+	  MqttClient::Message message;
+	  message.qos = MqttClient::QOS0;
+	  message.retained = false;
+	  message.dup = false;
+	  message.payload = (void*) pubbuf;
+	  message.payloadLen = strlen(pubbuf) + 1;
+	  mqtt->publish("/+/+/homie", message);
+	  pubflag = 0;
+
 }

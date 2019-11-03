@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+	<name>WebUI framework</name>
+	<comment></comment>
+	<projects>
+	</projects>
+	<buildSpec>
+		<buildCommand>
+			<name>org.eclipse.cdt.autotools.core.genmakebuilderV2</name>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.cdt.managedbuilder.core.genmakebuilder</name>
+			<triggers>clean,full,incremental,</triggers>
+			<arguments>
+			</arguments>
+		</buildCommand>
+		<buildCommand>
+			<name>org.eclipse.cdt.managedbuilder.core.ScannerConfigBuilder</name>
+			<triggers>full,incremental,</triggers>
+			<arguments>
+			</arguments>
+		</buildCommand>
+	</buildSpec>
+	<natures>
+		<nature>org.eclipse.cdt.core.cnature</nature>
+		<nature>org.eclipse.cdt.core.ccnature</nature>
+		<nature>org.eclipse.cdt.managedbuilder.core.managedBuildNature</nature>
+		<nature>org.eclipse.cdt.managedbuilder.core.ScannerConfigNature</nature>
+		<nature>org.eclipse.cdt.autotools.core.autotoolsNatureV2</nature>
+	</natures>
+	<linkedResources>
+		<link>
+			<name>Arduino libraries</name>
+			<type>2</type>
+			<location>C:/Program Files (x86)/Arduino/libraries</location>
+		</link>
+		<link>
+			<name>Arduino user libraries</name>
+			<type>2</type>
+			<location>C:/FILESERVER/profiles/Documents/Arduino/libraries</location>
+		</link>
+		<link>
+			<name>WebServer</name>
+			<type>2</type>
+			<location>C:/Program Files (x86)/Arduino/hardware/espressif/esp32/libraries/WebServer</location>
+		</link>
+		<link>
+			<name>esp sdk include</name>
+			<type>2</type>
+			<location>C:/Program Files (x86)/Arduino/hardware/espressif/esp32/tools/sdk/include</location>
+		</link>
+		<link>
+			<name>esp32</name>
+			<type>2</type>
+			<location>C:/Program Files (x86)/Arduino/hardware/espressif/esp32/cores/esp32</location>
+		</link>
+		<link>
+			<name>libraries</name>
+			<type>2</type>
+			<location>C:/Program Files (x86)/Arduino/hardware/espressif/esp32/libraries</location>
+		</link>
+	</linkedResources>
+</projectDescription>

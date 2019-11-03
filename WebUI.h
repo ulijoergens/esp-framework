@@ -34,9 +34,9 @@ typedef void (*PublishHandlerCbk)();
 typedef void (*SubscribeHandlerCbk)();
 
 
-class WebUI {
+class WebUI : public WebServer {
 	public:
-	WebUI(){
+	WebUI(int port = 80){
 		wifiTryReconnect = false;
 		wifiAPmode = false;
 		inSetup = 1;
@@ -63,7 +63,8 @@ class WebUI {
 	void loop();
 	static char* getMqttID() {
 		return mqttid;
-	}
+	};
+	/*
 	static WebServer* getServer(){
 		return &server;
 	};
@@ -73,6 +74,7 @@ class WebUI {
 	static void on(const String &uri, HTTPMethod method, WebServer::THandlerFunction fn){
 		server.on(uri, method, fn);
 	};
+	*/
 	static void setSubscribeCB(SubscribeHandlerCbk);
 	static void setPublishCB(PublishHandlerCbk);
 	static MqttClient::Error::type publish(const char* topic, MqttClient::Message& message) {
@@ -80,10 +82,10 @@ class WebUI {
 	};
 	static MqttClient::Error::type subscribe(const char* topic, enum MqttClient::QoS qos, MqttClient::MessageHandlerCbk cbk) {
 		return mqtt->subscribe(topic, qos, cbk );
-	}
+	};
 	
 	private:
-	static WebServer server;
+	static WebServer *server;
 	static DNSServer dnsServer;
 	static MqttClient *mqtt;
 	static WiFiClient network;
@@ -128,8 +130,8 @@ class WebUI {
 	static PublishHandlerCbk publishCB;
 	static SubscribeHandlerCbk subscribeCB;
 	
-	void WiFiEvent(WiFiEvent_t event);
-	static void runWebserver( void * pvParameters );
+	static void WiFiEvent(WiFiEvent_t event);
+	void runWebserver( void * pvParameters );
 	
 	static bool isAuthentified();
 	static void handleLogin();
@@ -158,9 +160,12 @@ class WebUI {
 	static void IRAM_ATTR handleInterrupt();
 	static void IRAM_ATTR onTimer();
 	static void publishData( void * pvParameters );
+	void mqttSubscribe();
+	void homieSubscribe();
 	static void processConfigRequest(MqttClient::MessageData & md);
 	static void sendConfigMessage();
-	
+	static void homieDiscoveryHandler(MqttClient::MessageData & md);
+	static void homieSendDiscoveryResponse();
 	static void logfln(const char *fmt, ...) {
 	  char buf[LOG_SIZE_MAX];
 	  va_list ap;

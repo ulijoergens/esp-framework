@@ -3,11 +3,14 @@
 
 const byte DNS_PORT = 53;
 
-const char* serverIndexFWUpload =
+const char *serverIndexFWUpload =
+  "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
+
+const char *serverIndexFWUploadScript =
   "<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
   "<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
   "<input type='file' name='update'><br>"
-  "<input type='submit' value='Update'>"
+  "<input type='submit' value='Update'><a class='button' href='/'>Back</a>"
   "</form>"
   "<div id='prg'>progress: 0%</div>"
   "<script>"
@@ -40,7 +43,8 @@ const char* serverIndexFWUpload =
   "});"
   "</script>";
 
-const char jquery[] = "<link rel=\"stylesheet\" href=\"http://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.css\">\n<script src=\"http://code.jquery.com/jquery-2.2.4.min.js\"></script>\n<script src=\"http://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.js\"></script>";
+//const char jquery[] = "<link rel=\"stylesheet\" href=\"http://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.css\">\n<script src=\"http://code.jquery.com/jquery-2.2.4.min.js\"></script>\n<script src=\"http://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.js\"></script>";
+const char jquery[] = "<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>";
 
 const char *myHostname = "esp32";
 
@@ -52,13 +56,16 @@ WiFiClient WebUI::network;
 uint64_t WebUI::chipid;
 char WebUI::ssid[33];
 char WebUI::password[65];
-bool WebUI::wifiTryReconnect;
+bool WebUI::wifiTryReconnect = true;
+bool WebUI::wifiAutoReconnect = true;
 bool WebUI::wifiAPmode;
 int WebUI::inSetup;
 int WebUI::otaRunning;
 int WebUI::otaProgress;
 int WebUI::otaTotal;
 String WebUI::otaMessage;
+String *WebUI::menuItems[10];
+String *WebUI::menuUrls[10];
 
 IPAddress WebUI::apIP(192, 168, 4, 1);
 IPAddress WebUI::mqttBrokerIP(192, 168, 1, 134);
@@ -109,7 +116,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       Serial.println("Disconnected from WiFi access point");
-      connectWIFI(-1, 120);
+      connectWIFI(6, 5, false);
       break;
     case SYSTEM_EVENT_STA_AUTHMODE_CHANGE:
       Serial.println("Authentication mode of access point has changed");
@@ -120,6 +127,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_LOST_IP:
       Serial.println("Lost IP address and IP address is reset to 0");
+      connectWIFI(6, 5,false);
       break;
     case SYSTEM_EVENT_STA_WPS_ER_SUCCESS:
       Serial.println("WiFi Protected Setup (WPS): succeeded in enrollee mode");
@@ -144,7 +152,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_AP_STADISCONNECTED:
       Serial.println("Client disconnected");
-      connectWIFI(6, 20);
+//      connectWIFI(6, 20,false);
       break;
     case SYSTEM_EVENT_AP_STAIPASSIGNED:
       Serial.println("Assigned IP address to client");
@@ -186,7 +194,7 @@ void WebUI::runWebserver( void * pvParameters ) {
   on("/configMqttForm", handleMqttForm);
   on("/configMqtt", handleConfigMqtt);
   on("/otaActivateForm", otaActivateForm);
-  on("/otaStart", otaStart);
+  on("/otaStart", handleOtaStart);
   on("/getOTAStatus", handleGetOTAStatus);
   on("/fwupload", HTTP_GET, handleFwUpload);
   on("/espreset", ESPrestart);
@@ -269,7 +277,7 @@ void WebUI::setup() {
     startAP();
   } else {
     Serial.println("Found WLAN settings. Try connecting to " + (String) ssid + "." );
-    connectWIFI( 6, 20 );
+    connectWIFI( 6, 5, false );
   }
 
 	ArduinoOTA
@@ -541,7 +549,8 @@ void WebUI::handleRoot() {
   server->sendHeader("Connection", "close");
   out += "<!doctype html><html><head><title>ESP32 Tank Level Pump Control</title>\n";
   out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
-  out += jquery;
+//  out += jquery;
+  out += skeleton;
   out += "<script>";
   out += "$(function() {setInterval(\"updateData()\", 1000) });";
   out += "function autoswitchChanged() {";
@@ -612,13 +621,20 @@ void WebUI::handleRoot() {
   out += "<tr><td>Setup mode:</td><td id='insetup'>" + (String) (inSetup ? "Yes" : "No") + "</td></tr>";
   out += "<tr><td>AP mode:</td><td id='wifiapmode'>" + (String) (wifiAPmode ? "On" : "Off") + "</td></tr>";
   out += "<tr><td>Network:</td><td id='network'>" + (String) (network.connected() ? "Yes" : "No") + "</td></tr>";
+  out += "<tr><td>Auto reconnect:</td><td id='wifiautoconnect'>" + (String) (wifiAutoReconnect ? "Yes" : "No") + "</td></tr>";
   out += "<tr><td>Signal:</td><td id='signal'>" + (String) WiFi.RSSI() + "</td></tr>";
   out += "<tr><td>WiFi power:</td><td id='wifipower'>" + (String) WiFi.getTxPower() + "</td></tr>";
   out += "<tr><td>Battery:</td><td id='battery'>" + (String) batteryLevel + "</td></tr>";
   out += "<tr><td>Voltage:</td><td id='voltage'>" + (String) batteryV + "</td></tr>";
   out += "</table > ";
-
-  out += "<p>You may want to </p> <p><a href = '/wifi'>config the wifi connection</a>.</p><p><a href='/configMqttForm'>config the MQTT broker connection </a></p><p><a href='/thresholdConfig'>configure pump thresholds </a></p><p><a href = '/otaActivateForm'>update firmware</a></p><p><a href='/fwupload'>upload firmware</a></p><p><a href='/espreset'>Reset the thing</a>.</p></body></html>";
+  for( int i = 0; i < 10 && menuItems[i]!=0L; i++) {
+	  out += "<a class='button' href='";
+	  out += *menuUrls[i];
+	  out += "'>";
+	  out += *menuItems[i];
+	  out += "</a>";
+  }
+  out += "<a class='button' href='/wifi'>WiFi setup</a><a class='button' href='/configMqttForm'>MQTT setup</a><a class='button' href='/otaActivateForm'>update firmware</a><a class='button' href='/fwupload'>upload firmware</a><a class='button' href='/espreset'>Reset the thing</a></body></html>";
   server->send(200, "text/html", out);
 }
 
@@ -676,11 +692,13 @@ void WebUI::handleNotFound() {
 }
 
 void WebUI::handleWiFiSetupForm() {
-  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  server->sendHeader("Pragma", "no-cache");
-  String out = "<!doctype html><html><head><title>ESP32 Tank Controller - WIFI Setup</title></head><body>";
+	//  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+	//  server->sendHeader("Pragma", "no-cache");
+	//  server->sendHeader("Connection", "close");
+  String out = "<!doctype html><html><head><title>WIFI Setup</title>";
+  out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
   out += skeleton;
-  out += "<form action = '/setParams' method = 'POST'>Please select SSID and provide WIFI password<br>";
+  out += "</head><body><form action = '/setParams' method = 'POST'>Please select SSID and provide WIFI password<br>";
   int n = WiFi.scanNetworks();
   Serial.println("scan done");
 
@@ -708,7 +726,11 @@ void WebUI::handleWiFiSetupForm() {
 
   out += "</select><br>";
   out += "Password:<input type='password' name='PASSWORD' placeholder='password'><br>";
-  out += "<input class='button-primary' type='submit' name='SUBMIT' value='Submit'><button class='button-primary' onclick=\"history.go(-1);\">Go back</button></form></body></html>";
+  out += "Automatic reconnect: <input type='checkbox' name='autoreconnect'";
+  out += (wifiAutoReconnect?" checked":"");
+  out += "><br>";
+  out += "<input type='submit' name='SUBMIT' value='Submit'><a class='button' href='/'\">Go back</a></form></body></html>";
+
   server->send(200, "text/html", out);
 }
 
@@ -716,71 +738,102 @@ void WebUI::handleSetWiFiParams() {
   server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server->sendHeader("Pragma", "no-cache");
   server->sendHeader("Connection", "close");
-  String out = "<html><body>";
+  String out = "<html><head><title>WIFI Setup</title>";
+  out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
   out += skeleton;
-  out += "<form action='/' method='POST'>Setting parameters and switching to WIFI client.<br>";
+  out += "</head><body><form action='/' method='POST'>Setting parameters and switching to WIFI client.<br>";
+  wifiAutoReconnect = false;
+  bool credentialsChanged = false;
   for (uint8_t i = 0; i < server->args(); i++) {
+//	  Serial.print(server->argName(i));
+//	  Serial.print(": ");
+//	  Serial.println(server->arg(i).c_str());
     if ( server->argName(i) == "USERID" ) {
+    	if(strcmp(server->arg(i).c_str(),ssid)!=0)
+    		credentialsChanged = true;
       strcpy( ssid, server->arg(i).c_str() );
     }
     if (server->argName(i) == "PASSWORD" ) {
+    	if(strcmp(server->arg(i).c_str(),password)!=0)
+    		credentialsChanged = true;
       strcpy( password, server->arg(i).c_str() );
     }
+    if (server->argName(i) == "autoreconnect" ) {
+//    	Serial.printf("autoreconnect: %s\n", server->arg(i).c_str());
+    	wifiAutoReconnect = (strcmp(server->arg(i).c_str(),"on")==0);
+    }
   }
-  out += "connect to ";
-  out += (String) ssid + " with password ";
-  out += (String) password + "<br><input type='submit' name='SUBMIT' value='Submit'></form></body></html>";
+  if(credentialsChanged && strlen(password)) {
+	  out += "connect to ";
+	  out += (String) ssid + " with password ";
+	//  saveCredentials();
+	  Serial.print( "Attempting to connect to ");
+	  Serial.print( ssid );
+	  Serial.print( " with pw " );
+	  Serial.println( password );
+	  Serial.println( wifiAutoReconnect );
+  }
+
+  out += (String) password + "<br><input type='submit' name='SUBMIT' value='Back'></form></body></html>";
   server->send(200, "text/html", out);
-//  saveCredentials();
-  Serial.print( "Attempting to connect to ");
-  Serial.print( ssid );
-  Serial.print( " with pw " );
-  Serial.println( password );
-  Serial.print("WiFi.disconnect(): ");
-  Serial.println(WiFi.disconnect(true));
-  wifiAPmode = false;
-  vTaskDelay(200 / portTICK_RATE_MS);
-  delay(2000L);
-  Serial.println(WiFi.status());
-  connectWIFI(6, 20);
-  if(!wifiAPmode)
-	ESP.restart();
+
+  if(credentialsChanged && strlen(password)) {
+	  Serial.print("WiFi.disconnect(): ");
+	  Serial.println(WiFi.disconnect(true));
+	  wifiAPmode = false;
+	  vTaskDelay(200 / portTICK_RATE_MS);
+	  delay(2000L);
+	  Serial.println(WiFi.status());
+	  connectWIFI(6, 5, credentialsChanged);
+	  if(!wifiAPmode)
+		ESP.restart();
+  }
 }
 
 void WebUI::handleMqttForm () {
-  String out = "<!doctype html><html><body>";
-  out += skeleton;
-  out += "<form action='/configMqtt' method='POST'>Please enter MQTT boker IP address and port<br>";
-  out += "MQTT ID / host name:<input type='text' name='mqttid' value='" + (String) mqttid + "'><br>";
-  out += "Broker address:<input type='text' name='brokerip' value='" + (String) mqttBrokerIP[0] + "." + (String) mqttBrokerIP[1] + "." + (String) mqttBrokerIP[2] + "." + (String) mqttBrokerIP[3] + "'><br>";
-  out += "Broker port:<input type='text' name='brokerport' value='" + (String) mqttBrokerPort + "'><br>";
-  out += "<input type='submit' name='SUBMIT' value='Submit'><button onclick=\"history.go(-1);\">Go back</button></form></body></html>";
-  server->send(200, "text/html", out);
+	  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+	  server->sendHeader("Pragma", "no-cache");
+	  server->sendHeader("Connection", "close");
+	  String out = "<!doctype html><html><head><title>MQTT Setup</title>";
+	  out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
+	  out += skeleton;
+	  out += "</head><body><form action='/configMqtt' method='POST'>Please enter MQTT boker IP address and port<br>";
+	  out += "MQTT ID / host name:<input type='text' name='mqttid' value='" + (String) mqttid + "'><br>";
+	  out += "Broker address:<input type='text' name='brokerip' value='" + (String) mqttBrokerIP[0] + "." + (String) mqttBrokerIP[1] + "." + (String) mqttBrokerIP[2] + "." + (String) mqttBrokerIP[3] + "'><br>";
+	  out += "Broker port:<input type='text' name='brokerport' value='" + (String) mqttBrokerPort + "'><br>";
+	  out += "<input type='submit' name='SUBMIT' value='Submit'><a class='button' href='/'>Go back</a></form></body></html>";
+	  server->send(200, "text/html", out);
 }
 
 void WebUI::handleConfigMqtt() {
-  String out = "<html><body>";
-  for (uint8_t i = 0; i < server->args(); i++) {
-    if ( server->argName(i) == "brokerip" ) {
-      mqttBrokerIP.fromString(server->arg(i).c_str());
-      // strcpy( ssid, server->arg(i).c_str() );
-    }
-    if (server->argName(i) == "brokerport" ) {
-      mqttBrokerPort = atoi( server->arg(i).c_str() );
-    }
-    if (server->argName(i) == "mqttid" ) {
-      strcpy( mqttid, server->arg(i).c_str() );
-    }
-  }
-  out += "Setting MQTT broker to ";
-  out += (String) "MQTT ID: " + (String) mqttid + "<br>";
-  out += (String) mqttBrokerIP[0] + "." + (String) mqttBrokerIP[1] + "." + (String) mqttBrokerIP[2] + "." + (String) mqttBrokerIP[3] + " with port ";
-  out += (String) mqttBrokerPort + "<br>";
-  out += "<a class=\"ui-button ui-widget ui-corner-all\" href='/'>Back to main menu</a></body></html>";
-  server->send(200, "text/html", out);
-  saveCredentials();
-  inSetup = 0;
-  mqtt->disconnect();
+	  server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+	  server->sendHeader("Pragma", "no-cache");
+	  server->sendHeader("Connection", "close");
+	  String out = "<!doctype html><html><head><title>MQTT Setup</title>";
+	  out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
+	  out += skeleton;
+	  out += "</head><body>";
+	  for (uint8_t i = 0; i < server->args(); i++) {
+		if ( server->argName(i) == "brokerip" ) {
+		  mqttBrokerIP.fromString(server->arg(i).c_str());
+		  // strcpy( ssid, server->arg(i).c_str() );
+		}
+		if (server->argName(i) == "brokerport" ) {
+		  mqttBrokerPort = atoi( server->arg(i).c_str() );
+		}
+		if (server->argName(i) == "mqttid" ) {
+		  strcpy( mqttid, server->arg(i).c_str() );
+		}
+	  }
+	  out += "Setting MQTT broker to ";
+	  out += (String) "MQTT ID: " + (String) mqttid + "<br>";
+	  out += (String) mqttBrokerIP[0] + "." + (String) mqttBrokerIP[1] + "." + (String) mqttBrokerIP[2] + "." + (String) mqttBrokerIP[3] + " with port ";
+	  out += (String) mqttBrokerPort + "<br>";
+	  out += "<a class=\"ui-button ui-widget ui-corner-all\" href='/'>Back to main menu</a></body></html>";
+	  server->send(200, "text/html", out);
+	  saveCredentials();
+	  inSetup = 0;
+	  mqtt->disconnect();
 }
 
 void WebUI::otaActivateForm() {
@@ -790,13 +843,16 @@ void WebUI::otaActivateForm() {
   server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server->sendHeader("Pragma", "no-cache");
   server->sendHeader("Connection", "close");
-  String out = "<!doctype html><html><body><form action='/otaStart' method='POST'>Please press Button to activate OTA<br>";
+  String out = "<!doctype html><html><head><title>OTA</title>";
+  out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
+  out += skeleton;
+  out += "</head><body><form action='/otaStart' method='POST'>Please press Button to activate OTA<br>";
   out += "<input type='text' name='brokerip' value='" + ArduinoOTA.getHostname() + "'><br>";
-  out += "<input type='submit' name='SUBMIT' value='Start'></form><button onclick=\"history.go(-1);\">Go back</button></body></html>";
+  out += "<input type='submit' name='SUBMIT' value='Start'><a class='button' href='/'>Go back</a></form></body></html>";
   server->send(200, "text/html", out);
 }
 
-void WebUI::otaStart() {
+void WebUI::handleOtaStart() {
   Serial.println("Start OTA");
   ArduinoOTA.begin();
   otaMessage = "waiting.";
@@ -806,7 +862,8 @@ void WebUI::otaStart() {
   server->sendHeader("Connection", "close");
   inSetup = true;
   String out = "<!doctype html><html><head><title>OTA</title>";
-  out += jquery;
+  out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
+  out += skeleton;
   out += "<script>";
   out += "$(function() {setInterval(\"updateStatus()\", 1000) });\n";
   out += "function updateStatus() {\n";
@@ -846,7 +903,10 @@ void WebUI::ESPrestart() {
 
 void WebUI::handleFwUpload() {
     server->sendHeader("Connection", "close");
-    server->send(200, "text/html", serverIndexFWUpload);
+    String out = serverIndexFWUpload;
+    out += skeleton;
+    out += serverIndexFWUploadScript;
+    server->send(200, "text/html", out);
   };
   
 void WebUI::startAP() {
@@ -867,82 +927,84 @@ void WebUI::startAP() {
   dnsServer.start(DNS_PORT, "*", apIP);
 }
 
-void WebUI::connectWIFI( int maxRetries, int connectionTimeout ) {
-  if ( wifiAPmode ) return;
-  Serial.println("connectWIFI");
-  Serial.println(WiFi.status());
-  Serial.println(WL_CONNECTED);
-  WiFi.disconnect();
-  WiFi.onEvent(WiFiEvent);
-  for( int retries = 0; retries < maxRetries && WiFi.status() != WL_CONNECTED && !wifiAPmode; retries++ ) {
-    Serial.println("WiFi.begin()");
-    //    Serial.println("WiFi.disconnect()");
-    //    WiFi.disconnect(true);
-    wl_status_t wifistatus = WiFi.begin ( ssid, password );
+void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentialsChanged ) {
+	  if ( wifiAPmode ) return;
+	  Serial.println("connectWIFI");
+//	  Serial.println(WiFi.status());
+//	  Serial.println(WL_CONNECTED);
+	  if(WiFi.status() == WL_CONNECTED)
+		  WiFi.disconnect();
+	  WiFi.onEvent(WiFiEvent);
+	  for( int retries = 0; (wifiAutoReconnect || (!wifiAutoReconnect && retries < maxRetries)) && WiFi.status() != WL_CONNECTED && !wifiAPmode; retries++ ) {
+		Serial.println("WiFi.begin()");
+		//    Serial.println("WiFi.disconnect()");
+		//    WiFi.disconnect(true);
+		wl_status_t wifistatus = WiFi.begin ( ssid, password );
 
-    if( wifistatus ) {
-      wifiAPmode = false;
-      Serial.print ( "Connecting to " );
-      Serial.println ( ssid );
+		if( wifistatus ) {
+		  wifiAPmode = false;
+		  Serial.print ( "Connecting to " );
+		  Serial.println ( ssid );
 
-      // Wait for connection
-      for( int i = 0; wifistatus != WL_CONNECTED && wifistatus != WL_NO_SHIELD && i < connectionTimeout; i++ ) {
-    	  wifistatus = WiFi.status();
-    	    switch( wifistatus ) {
-    	    case WL_IDLE_STATUS:
-    	    	Serial.println("WL_IDLE_STATUS");
-    	    	break;
-    	    case WL_NO_SSID_AVAIL:
-    	    	Serial.println("WL_NO_SSID_AVAIL");
-    	    	break;
-    	    case WL_SCAN_COMPLETED:
-    	    	Serial.println("WL_SCAN_COMPLETED");
-    	    	break;
-    	    case WL_CONNECTED:
-    	    	Serial.println("WL_CONNECTED");
-    	    	break;
-    	    case WL_CONNECT_FAILED:
-    	    	Serial.println("WL_CONNECT_FAILED");
-    	    	break;
-    	    case WL_CONNECTION_LOST:
-    	    	Serial.println("WL_CONNECTION_LOST");
-    	    	break;
-    	    case WL_DISCONNECTED:
-    	    	Serial.println("WL_DISCONNECTED");
-    	    	break;
-    	    case WL_NO_SHIELD:
-    	    	Serial.println("WL_NO_SHIELD");
-    	    	break;
-    	    default:
-    	    	Serial.println("unknown WiFi return code.");
-    	    	break;
-    	    }
-        checkInterrupt();
-        //vTaskDelay(1000 / portTICK_RATE_MS);
-        delay ( 1000 );
-        Serial.print ( "." );
-      }
-    } else {
-      Serial.print( "Connecting to ");
-      Serial.print( ssid );
-      Serial.print( " failed with error code " );
-      Serial.println(wifistatus);
-    }
+		  // Wait for connection
+		  for( int i = 0; wifistatus != WL_CONNECTED && wifistatus != WL_NO_SHIELD && i < connectionTimeout && !wifiAPmode; i++ ) {
+			  wifistatus = WiFi.status();
+				switch( wifistatus ) {
+				case WL_IDLE_STATUS:
+					Serial.println("WL_IDLE_STATUS");
+					break;
+				case WL_NO_SSID_AVAIL:
+					Serial.println("WL_NO_SSID_AVAIL");
+					break;
+				case WL_SCAN_COMPLETED:
+					Serial.println("WL_SCAN_COMPLETED");
+					break;
+				case WL_CONNECTED:
+					Serial.println("WL_CONNECTED");
+					break;
+				case WL_CONNECT_FAILED:
+					Serial.println("WL_CONNECT_FAILED");
+					break;
+				case WL_CONNECTION_LOST:
+					Serial.println("WL_CONNECTION_LOST");
+					break;
+				case WL_DISCONNECTED:
+					Serial.println("WL_DISCONNECTED");
+					break;
+				case WL_NO_SHIELD:
+					Serial.println("WL_NO_SHIELD");
+					break;
+				default:
+					Serial.println("unknown WiFi return code.");
+					break;
+				}
+			checkInterrupt();
+			//vTaskDelay(1000 / portTICK_RATE_MS);
+			delay ( 1000 );
+			Serial.print ( "." );
+		  }
+		} else {
+		  Serial.print( "Connecting to ");
+		  Serial.print( ssid );
+		  Serial.print( " failed with error code " );
+		  Serial.println(wifistatus);
+		}
 
-  }
-  if ( WiFi.status() == WL_CONNECTED ) {
-    Serial.println( "" );
-    Serial.printf( "Connected to %s with IP address ", ssid);
-	Serial.println( WiFi.localIP() );
-    saveCredentials();
-    inSetup = 0;
-  } else {
-    Serial.printf( "Connection to %s timed out.\n", ssid );
-    Serial.println( " timed out." );
-    Serial.println("Falling back to Access Point Mode." );
-    startAP();
-  }
-  Serial.println("connectWIFI done.");
+	  }
+	  if ( WiFi.status() == WL_CONNECTED ) {
+		Serial.println( "" );
+		Serial.printf( "Connected to %s with IP address ", ssid);
+		Serial.println( WiFi.localIP() );
+		if( credentialsChanged )
+			saveCredentials();
+		inSetup = 0;
+	  } else {
+		Serial.printf( "Connection to %s timed out.\n", ssid );
+		Serial.println( " timed out." );
+		Serial.println("Falling back to Access Point Mode." );
+		startAP();
+	  }
+	  Serial.println("connectWIFI done.");
 }
 
 /** Load config like WLAN credentials from EEPROM */

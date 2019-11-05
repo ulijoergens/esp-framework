@@ -58,6 +58,10 @@ class WebUI : public WebServer {
 		uint32_t lastIsrAt = 0;
 		timerMux = portMUX_INITIALIZER_UNLOCKED;
 		mux = portMUX_INITIALIZER_UNLOCKED;
+		for( int i=0; i<10; i++ ) {
+			menuItems[i] == NULL;
+			menuUrls[i] = NULL;
+		}
 	};
 	void setup();
 	void loop();
@@ -83,7 +87,21 @@ class WebUI : public WebServer {
 	static MqttClient::Error::type subscribe(const char* topic, enum MqttClient::QoS qos, MqttClient::MessageHandlerCbk cbk) {
 		return mqtt->subscribe(topic, qos, cbk );
 	};
-	
+
+	char *getMqttid() {
+			return( mqttid);
+	}
+
+	int addMenuItem(char *title, char *url){
+		for( int i=0; i<10; i++ ) {
+			if( menuItems[i] == NULL) {
+				menuItems[i] = new String(title);
+				menuUrls[i] = new String(url);
+				return i;
+			}
+		}
+		return -1;
+	}
 	private:
 	static WebServer *server;
 	static DNSServer dnsServer;
@@ -94,6 +112,7 @@ class WebUI : public WebServer {
 	static char ssid[33];
 	static char password[65];
 	static bool wifiTryReconnect;
+	static bool wifiAutoReconnect;
 	static bool wifiAPmode;
 	static int inSetup;
 	static int otaRunning;
@@ -105,6 +124,8 @@ class WebUI : public WebServer {
 	static IPAddress mqttBrokerIP;
 	static int mqttBrokerPort;
 	static char mqttid[32];
+	static String *menuItems[10];
+	static String *menuUrls[10];
 #ifdef WEBUI_USE_BUILDIN_STATUS
 	static char MQTT_TOPIC_STATUS[64]; 
 #endif
@@ -144,12 +165,12 @@ class WebUI : public WebServer {
 	static void handleMqttForm ();
 	static void handleConfigMqtt();
 	static void otaActivateForm();
-	static void otaStart();
+	static void handleOtaStart();
 	static void handleGetOTAStatus();
 	static void ESPrestart();
 	static void handleFwUpload();
 	static void startAP();
-	static void connectWIFI( int maxRetries, int connectionTimeout );
+	static void connectWIFI( int maxRetries, int connectionTimeout, bool credentialsChanged );
 	static void loadOldConfigFromEEPROM();
 	static void loadConfigFromEEPROM();
 	static void loadConfigFromEEPROMV10();
@@ -166,6 +187,7 @@ class WebUI : public WebServer {
 	static void sendConfigMessage();
 	static void homieDiscoveryHandler(MqttClient::MessageData & md);
 	static void homieSendDiscoveryResponse();
+
 	static void logfln(const char *fmt, ...) {
 	  char buf[LOG_SIZE_MAX];
 	  va_list ap;

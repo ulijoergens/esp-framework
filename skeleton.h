@@ -2,6 +2,7 @@
 #define _SKELETON_H
 
 static const char skeleton[] = 
+"<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
 "<style>"
 ".container {"
 "  position: relative;"

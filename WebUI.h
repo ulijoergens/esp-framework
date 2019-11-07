@@ -32,7 +32,7 @@
 #define WEBUI_USE_BUILDIN_STATUS 1
 typedef void (*PublishHandlerCbk)();
 typedef void (*SubscribeHandlerCbk)();
-
+typedef void (*TimerCbk)();
 
 class WebUI : public WebServer {
 	public:
@@ -54,6 +54,7 @@ class WebUI : public WebServer {
 		numberOfInterrupts = 0;
 		mqttBrokerPort = 1883;
 		int pubflag = 0;
+		timerCB = NULL;
 		uint32_t isrCounter = 0;
 		uint32_t lastIsrAt = 0;
 		timerMux = portMUX_INITIALIZER_UNLOCKED;
@@ -79,6 +80,9 @@ class WebUI : public WebServer {
 		server.on(uri, method, fn);
 	};
 	*/
+	static void setTimerCB(TimerCbk callback){
+		timerCB = callback;
+	};
 	static void setSubscribeCB(SubscribeHandlerCbk);
 	static void setPublishCB(PublishHandlerCbk);
 	static MqttClient::Error::type publish(const char* topic, MqttClient::Message& message) {
@@ -88,7 +92,8 @@ class WebUI : public WebServer {
 		return mqtt->subscribe(topic, qos, cbk );
 	};
 
-	char *getMqttid() {
+	const char *getMqttid() {
+		Serial.printf("Get mqttid: %s\n",mqttid);
 			return( mqttid);
 	}
 
@@ -132,7 +137,7 @@ class WebUI : public WebServer {
 	static char MQTT_TOPIC_CONFIG_REQ[];
 	static char MQTT_TOPIC_CONFIG_RESP[];
 	static int pubflag;
-	
+	static TimerCbk timerCB;
 	static byte interruptPin;
 	static volatile int interruptCounter;
 	static int numberOfInterrupts;

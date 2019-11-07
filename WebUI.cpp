@@ -88,6 +88,7 @@ portMUX_TYPE WebUI::mux;
 
 volatile uint32_t WebUI::isrCounter;
 volatile uint32_t WebUI::lastIsrAt;
+TimerCbk WebUI::timerCB;
 
 int WebUI::firmwareMajor;
 int WebUI::firmwareMinor;
@@ -707,7 +708,7 @@ void WebUI::handleWiFiSetupForm() {
     out += "no networks found<br>";
   } else {
     out += "<label class = \"select\" for=\"USERID\">SSID:</label><select name='USERID' id='USERID' placeholder='SSID' data-inline='true' data-mini='true' >";
-    out += n + " networks found:<br>";
+    out += n + " networks found:";
     Serial.println(" networks found");
 
     for (int i = 0; i < n; ++i) {
@@ -729,7 +730,7 @@ void WebUI::handleWiFiSetupForm() {
   out += "Automatic reconnect: <input type='checkbox' name='autoreconnect'";
   out += (wifiAutoReconnect?" checked":"");
   out += "><br>";
-  out += "<input type='submit' name='SUBMIT' value='Submit'><a class='button' href='/'\">Go back</a></form></body></html>";
+  out += "<input type='submit' name='SUBMIT' value='Submit'><a class='button' href='/'>Go back</a></form></body></html>";
 
   server->send(200, "text/html", out);
 }
@@ -1225,6 +1226,8 @@ void IRAM_ATTR WebUI::onTimer() {
   // Give a semaphore that we can check in the loop
   xSemaphoreGiveFromISR(timerSemaphore, NULL);
   // It is safe to use digitalRead/Write here if you want to toggle an output
+  if(timerCB)
+	  timerCB();
 }
 
 #ifdef WEBUI_USE_BUILDIN_STATUS

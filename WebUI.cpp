@@ -592,6 +592,11 @@ void WebUI::handleRoot() {
   out +=       "dataType: 'json',";
   out +=       "url:'/getData',";
   out +=       "success:function(data) {\n";
+  out +=       "   hours = Math.floor(data.isrcounter / 3600);";
+  out +=       "   data.isrcounter %= 3600;";
+  out +=       "   minutes = Math.floor(data.isrcounter / 60);";
+  out +=       "   seconds = data.isrcounter % 60;";
+  out +=       "   $('#uptime').html(hours+':'+minutes+':'+seconds);\n";
   out +=       "   $('#isrcounter').html(data.isrcounter );\n";
   out +=       "   $('#lastisrat').html(data.lastisrat);\n";
   out +=       "   $('#network').html(data.network ?\"Yes\":\"No\");\n";
@@ -617,6 +622,17 @@ void WebUI::handleRoot() {
   } else {
     out += "<tr><td>wifi connection:</td><td>" + String(ssid) + "</td></tr>";
   }
+  uint32_t time = isrCounter;
+  uint32_t h = time/3600;
+  time = time%3600;
+  uint32_t min = time/60;
+  time = time%60;
+  uint32_t sec = time;
+
+  out += "<tr><td>Uptime:</td><td id='uptime'>" + (String) h;
+  out += ":" + (String) min;
+  out += ":" + (String) sec;
+  out += "</td></tr>";
   out += "<tr><td>isrCounter:</td><td id='isrcounter'>" + (String)isrCounter + "</td></tr>";
   out += "<tr><td>lastIsrAt:</td><td id='lastisrat'>" + (String) lastIsrAt + "</td></tr>";
   out += "<tr><td>Setup mode:</td><td id='insetup'>" + (String) (inSetup ? "Yes" : "No") + "</td></tr>";
@@ -936,7 +952,8 @@ void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentials
 	  if(WiFi.status() == WL_CONNECTED)
 		  WiFi.disconnect();
 	  WiFi.onEvent(WiFiEvent);
-	  for( int retries = 0; (wifiAutoReconnect || (!wifiAutoReconnect && retries < maxRetries)) && WiFi.status() != WL_CONNECTED && !wifiAPmode; retries++ ) {
+	  int retries = 0;
+	  do {
 		Serial.println("WiFi.begin()");
 		//    Serial.println("WiFi.disconnect()");
 		//    WiFi.disconnect(true);
@@ -990,8 +1007,10 @@ void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentials
 		  Serial.print( " failed with error code " );
 		  Serial.println(wifistatus);
 		}
+		if(!wifiAutoReconnect)
+			retries++;
+	  } while( (retries < maxRetries) && WiFi.status() != WL_CONNECTED && !wifiAPmode );
 
-	  }
 	  if ( WiFi.status() == WL_CONNECTED ) {
 		Serial.println( "" );
 		Serial.printf( "Connected to %s with IP address ", ssid);

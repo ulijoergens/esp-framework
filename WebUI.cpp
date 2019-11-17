@@ -790,7 +790,7 @@ void WebUI::handleSetWiFiParams() {
   if(credentialsChanged && strlen(password)) {
 	  out += "connect to ";
 	  out += (String) ssid + " with password ";
-	//  saveCredentials();
+	//  saveConfig();
 	  Serial.print( "Attempting to connect to ");
 	  Serial.print( ssid );
 	  Serial.print( " with pw " );
@@ -855,7 +855,7 @@ void WebUI::handleConfigMqtt() {
 	  out += (String) mqttBrokerPort + "<br>";
 	  out += "<a class=\"ui-button ui-widget ui-corner-all\" href='/'>Back to main menu</a></body></html>";
 	  server->send(200, "text/html", out);
-	  saveCredentials();
+	  saveConfig();
 	  inSetup = 0;
 	  if(mqtt != NULL)
 		  mqtt->disconnect();
@@ -1025,7 +1025,7 @@ void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentials
 		Serial.printf( "Connected to %s with IP address ", ssid);
 		Serial.println( WiFi.localIP() );
 		if( credentialsChanged )
-			saveCredentials();
+			saveConfig();
 		inSetup = 0;
 	  } else {
 		Serial.printf( "Connection to %s timed out.\n", ssid );
@@ -1162,7 +1162,7 @@ void WebUI::loadConfigFromEEPROMV10() {
 
 /** Store WLAN credentials to EEPROM */
 
-void WebUI::WebUI::saveCredentials() {
+void WebUI::WebUI::saveConfig() {
   int eeAddress = 0;
   Serial.println("Save config:");
   Serial.println(mqttBrokerIP);

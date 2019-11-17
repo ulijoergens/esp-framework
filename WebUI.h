@@ -89,6 +89,7 @@ class WebUI : public WebServer {
 	static void setLoadConfigCB(loadConfigCbk cb){
 		loadConfigCB = cb;
 	}
+	static void saveConfig();
 	static void setSubscribeCB(SubscribeHandlerCbk);
 	static void setPublishCB(PublishHandlerCbk);
 	static MqttClient::Error::type publish(const char* topic, MqttClient::Message& message) {
@@ -187,7 +188,6 @@ class WebUI : public WebServer {
 	static void loadOldConfigFromEEPROM();
 	static void loadConfigFromEEPROM();
 	static void loadConfigFromEEPROMV10();
-	static void saveCredentials();
 	static boolean isIp(String str);
 	static String toStringIp(IPAddress ip);
 	static void checkInterrupt();

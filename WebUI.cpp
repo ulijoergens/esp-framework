@@ -48,7 +48,7 @@ const char jquery[] = "<script src='https://ajax.googleapis.com/ajax/libs/jquery
 
 const char *myHostname = "esp32";
 
-WebServer *WebUI::server;
+WebServer *WebUI::server = NULL;
 DNSServer WebUI::dnsServer;
 MqttClient *WebUI::mqtt;
 WiFiClient WebUI::network;
@@ -89,6 +89,9 @@ portMUX_TYPE WebUI::mux;
 volatile uint32_t WebUI::isrCounter;
 volatile uint32_t WebUI::lastIsrAt;
 TimerCbk WebUI::timerCB;
+
+loadConfigCbk WebUI::loadConfigCB;
+saveConfigCbk WebUI::saveConfigCB;
 
 int WebUI::firmwareMajor;
 int WebUI::firmwareMinor;
@@ -254,10 +257,10 @@ void WebUI::runWebserver( void * pvParameters ) {
     TIMG_WDT_WKEY_VALUE;
     TIMERG1.wdt_feed = 1;
     TIMERG1.wdt_wprotect = 0;
-    handleClient();
-    ArduinoOTA.handle();
+//    if( !otaRunning )
+    	server->handleClient();
     //delay(100);
-    vTaskDelay(20 / portTICK_PERIOD_MS);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 #endif
 }
@@ -302,6 +305,7 @@ void WebUI::setup() {
   .onEnd([&]() {
     inSetup = false;
     ArduinoOTA.end();
+    otaRunning = false;
     timerAlarmEnable(timer);
     otaMessage = "Upload completed.";
     Serial.println("\nonEnd");
@@ -314,6 +318,7 @@ void WebUI::setup() {
   })
   .onError([&](ota_error_t error) {
     Serial.printf("Error[%u]: ", error);
+    otaRunning = false;
     ArduinoOTA.end();
     timerAlarmEnable(timer);
     inSetup = false;
@@ -481,9 +486,11 @@ void WebUI::loop() {
     dnsServer.processNextRequest();	
   checkInterrupt();
 #if WEBSERVER_TASK_CORE == 1
-  handleClient();
-  ArduinoOTA.handle();
+//  if(!otaRunning)
+  	server->handleClient();
 #endif
+  if( otaRunning )
+  	ArduinoOTA.handle();
 }
 
 bool WebUI::isAuthentified() {
@@ -664,7 +671,7 @@ boolean WebUI::captivePortal() {
     //    server->client().stop(); // Stop is needed because we sent no content length
     return true;
   }
-  Serial.print("No captive portal");
+//  Serial.print("No captive portal");
   return false;
 }
 
@@ -850,7 +857,8 @@ void WebUI::handleConfigMqtt() {
 	  server->send(200, "text/html", out);
 	  saveCredentials();
 	  inSetup = 0;
-	  mqtt->disconnect();
+	  if(mqtt != NULL)
+		  mqtt->disconnect();
 }
 
 void WebUI::otaActivateForm() {
@@ -871,8 +879,9 @@ void WebUI::otaActivateForm() {
 
 void WebUI::handleOtaStart() {
   Serial.println("Start OTA");
+  otaRunning = true;
   ArduinoOTA.begin();
-  otaMessage = "waiting.";
+//  otaMessage = "waiting.";
   Serial.println("Ready");
   server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server->sendHeader("Pragma", "no-cache");
@@ -882,7 +891,7 @@ void WebUI::handleOtaStart() {
   out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
   out += skeleton;
   out += "<script>";
-  out += "$(function() {setInterval(\"updateStatus()\", 1000) });\n";
+  out += " $(function() {setInterval(\"updateStatus()\", 3000) });\n";
   out += "function updateStatus() {\n";
   out +=   "$.ajax({";
   out +=       "type:'Get',";
@@ -893,7 +902,7 @@ void WebUI::handleOtaStart() {
   out +=       "   console.log(\"getData status: \" + data.status);\n";
   out +=       "},";
   out +=       "error:function(xhr, status, error) {\n";
-  out +=       "   $('#otastatus').html(\"error \" + error );\n";
+  out +=       "   //$('#otastatus').html(\"error \" + error );\n";
   out +=       "   console.log(\"getData error: \" + error);\n";
   out +=       "}";
   out +=   "});\n";
@@ -1083,6 +1092,9 @@ void WebUI::loadConfigFromEEPROM() {
   eeAddress += sizeof(uint32_t);
   EEPROM.get(eeAddress, mqttBrokerPort);
   eeAddress += sizeof(mqttBrokerPort);
+  if(loadConfigCB != NULL) {
+	  eeAddress = loadConfigCB(eeAddress, firmwareMinor, firmwareMajor);
+  }
   char ok[2 + 1];
   EEPROM.get(eeAddress, ok);
 
@@ -1103,6 +1115,7 @@ void WebUI::loadConfigFromEEPROM() {
     Serial.println(mqttBrokerIP);
     Serial.println(mqttBrokerPort);
   }
+  ArduinoOTA.setHostname(mqttid);
 }
 
 void WebUI::loadConfigFromEEPROMV10() {
@@ -1122,6 +1135,9 @@ void WebUI::loadConfigFromEEPROMV10() {
   eeAddress += sizeof(uint32_t);
   EEPROM.get(eeAddress, mqttBrokerPort);
   eeAddress += sizeof(mqttBrokerPort);
+  if(loadConfigCB != NULL) {
+	  eeAddress = loadConfigCB(eeAddress, firmwareMinor, firmwareMajor);
+  }
   char ok[2 + 1];
   EEPROM.get(eeAddress, ok);
 
@@ -1188,6 +1204,9 @@ void WebUI::WebUI::saveCredentials() {
 
   Serial.print("eeAdr: ");
   Serial.println(eeAddress);
+  if(saveConfigCB != NULL) {
+	  eeAddress = saveConfigCB(eeAddress);
+  }
 
   char ok[2 + 1] = "OK";
   Serial.print("eeAdr: ");
@@ -1252,7 +1271,7 @@ void IRAM_ATTR WebUI::onTimer() {
 #ifdef WEBUI_USE_BUILDIN_STATUS
 void WebUI::publishData( void * pvParameters ) {
   while (true) {
-    if ( mqtt += NULL )
+    if ( mqtt != NULL && !otaRunning )
       if ( !wifiAPmode && !inSetup && mqtt->isConnected()) {
         char pubbuf[128] = "";
 
@@ -1267,6 +1286,9 @@ void WebUI::publishData( void * pvParameters ) {
         mqtt->publish(MQTT_TOPIC_STATUS, message);
         //Serial.printf("Published %s to %s\n", pubbuf, MQTT_TOPIC_STATUS);
 
+        //	  Serial.println("Now processing callbacks...");
+        	  if(publishCB)
+        		publishCB();
         pubflag = 0;
         // Idle for 30 seconds
         mqtt->yield(500L);
@@ -1274,9 +1296,6 @@ void WebUI::publishData( void * pvParameters ) {
         // Serial.println("Publish: wait for connection to mqtt broker.");
       }
 	  
-//	  Serial.println("Now processing callbacks...");
-	  if(publishCB)
-		publishCB();
 //	  Serial.println("Callbacks processed.");
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }

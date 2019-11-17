@@ -30,6 +30,8 @@
 #define WEBSERVER_TASK_CORE 1
 
 #define WEBUI_USE_BUILDIN_STATUS 1
+typedef int (*loadConfigCbk)(int eeAddress, int major, int minor);
+typedef int (*saveConfigCbk)(int eeAddress);
 typedef void (*PublishHandlerCbk)();
 typedef void (*SubscribeHandlerCbk)();
 typedef void (*TimerCbk)();
@@ -66,9 +68,7 @@ class WebUI : public WebServer {
 	};
 	void setup();
 	void loop();
-	static char* getMqttID() {
-		return mqttid;
-	};
+
 	/*
 	static WebServer* getServer(){
 		return &server;
@@ -83,6 +83,12 @@ class WebUI : public WebServer {
 	static void setTimerCB(TimerCbk callback){
 		timerCB = callback;
 	};
+	static void setSaveConfigCB(saveConfigCbk cb){
+		saveConfigCB = cb;
+	}
+	static void setLoadConfigCB(loadConfigCbk cb){
+		loadConfigCB = cb;
+	}
 	static void setSubscribeCB(SubscribeHandlerCbk);
 	static void setPublishCB(PublishHandlerCbk);
 	static MqttClient::Error::type publish(const char* topic, MqttClient::Message& message) {
@@ -153,6 +159,8 @@ class WebUI : public WebServer {
 	static int firmwareMinor;
 	static float batteryLevel;
 	static float batteryV;
+	static loadConfigCbk loadConfigCB;
+	static saveConfigCbk saveConfigCB;
 	static PublishHandlerCbk publishCB;
 	static SubscribeHandlerCbk subscribeCB;
 	

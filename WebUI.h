@@ -68,7 +68,10 @@ class WebUI : public WebServer {
 	};
 	void setup();
 	void loop();
-
+	static String title;
+	static void setTitle(String newTitle){
+		title = newTitle;
+	}
 	/*
 	static WebServer* getServer(){
 		return &server;

@@ -54,6 +54,7 @@ MqttClient *WebUI::mqtt;
 WiFiClient WebUI::network;
 
 uint64_t WebUI::chipid;
+String WebUI::title = "WebUI Framework";
 char WebUI::ssid[33];
 char WebUI::password[65];
 bool WebUI::wifiTryReconnect = true;
@@ -300,6 +301,7 @@ void WebUI::setup() {
 
 		// NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
 		otaMessage = "Upload of " + type + " started.";
+//	    server->handleClient();
 		Serial.println("Start updating " + type);
 	  })
   .onEnd([&]() {
@@ -308,13 +310,17 @@ void WebUI::setup() {
     otaRunning = false;
     timerAlarmEnable(timer);
     otaMessage = "Upload completed.";
+//    server->handleClient();
     Serial.println("\nonEnd");
   })
   .onProgress([&](unsigned int progress, unsigned int total) {
     otaProgress = progress;
     otaTotal = total;
-    otaMessage = "Progress: " + (String) (progress / (total / 100) + "%");
+    char buf[30];
+    sprintf(buf,"Progress: %d %%", progress / (total / 100));
+    otaMessage = (String) buf;
     Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+//    server->handleClient();
   })
   .onError([&](ota_error_t error) {
     Serial.printf("Error[%u]: ", error);
@@ -345,6 +351,7 @@ void WebUI::setup() {
       Serial.print("Unknown error" );
       otaMessage = "Unknown error: " + (String) error;
     }
+//    server->handleClient();
   });
 
     // Create semaphore to inform us when the timer has fired
@@ -555,7 +562,7 @@ void WebUI::handleRoot() {
   server->sendHeader("Pragma", "no-cache");
   server->sendHeader("Expires", "-1");
   server->sendHeader("Connection", "close");
-  out += "<!doctype html><html><head><title>ESP32 Tank Level Pump Control</title>\n";
+  out += "<!doctype html><html><head><title>" + title + "</title>\n";
   out += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
 //  out += jquery;
   out += skeleton;
@@ -621,7 +628,7 @@ void WebUI::handleRoot() {
   out += "}";
   out += "</script>";
   out += "</head><body>";
-  out += "<h1>ESP32 Tank Level Pump Control</h1>";
+  out += "<h1>"+title+"</h1>";
   out += "<table><tr><td>chipid:</td><td>" + String(mqttid) + "</td></tr>";
   out += "<tr><td>Firmware:</td><td>" + String(firmwareMajor) + "." + String(firmwareMinor) + "</td></tr>";
   if (server->client().localIP() == apIP) {

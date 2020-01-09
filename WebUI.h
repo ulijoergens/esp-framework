@@ -59,6 +59,7 @@ class WebUI : public WebServer {
 		timerCB = NULL;
 		uint32_t isrCounter = 0;
 		uint32_t lastIsrAt = 0;
+		mqttRetry = 0;
 		timerMux = portMUX_INITIALIZER_UNLOCKED;
 		mux = portMUX_INITIALIZER_UNLOCKED;
 		for( int i=0; i<10; i++ ) {
@@ -122,7 +123,7 @@ class WebUI : public WebServer {
 	static DNSServer dnsServer;
 	static MqttClient *mqtt;
 	static WiFiClient network;
-	
+	static int mqttRetry;
 	static uint64_t chipid;
 	static char ssid[33];
 	static char password[65];

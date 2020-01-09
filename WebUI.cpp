@@ -57,6 +57,7 @@ uint64_t WebUI::chipid;
 String WebUI::title = "WebUI Framework";
 char WebUI::ssid[33];
 char WebUI::password[65];
+int WebUI::mqttRetry = 0;
 bool WebUI::wifiTryReconnect = true;
 bool WebUI::wifiAutoReconnect = true;
 bool WebUI::wifiAPmode;
@@ -121,7 +122,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       Serial.println("Disconnected from WiFi access point");
-      connectWIFI(6, 5, false);
+      connectWIFI(6, 10, false);
       break;
     case SYSTEM_EVENT_STA_AUTHMODE_CHANGE:
       Serial.println("Authentication mode of access point has changed");
@@ -132,7 +133,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_LOST_IP:
       Serial.println("Lost IP address and IP address is reset to 0");
-      connectWIFI(6, 5,false);
+      connectWIFI(6, 10,false);
       break;
     case SYSTEM_EVENT_STA_WPS_ER_SUCCESS:
       Serial.println("WiFi Protected Setup (WPS): succeeded in enrollee mode");
@@ -282,7 +283,7 @@ void WebUI::setup() {
     startAP();
   } else {
     Serial.println("Found WLAN settings. Try connecting to " + (String) ssid + "." );
-    connectWIFI( 6, 5, false );
+    connectWIFI( 6, 10, false );
   }
 
 	ArduinoOTA
@@ -430,15 +431,15 @@ void WebUI::loop() {
   if ( !inSetup && !wifiAPmode ) {
     // logfln("Check mqtt connection.");
     if (mqtt != NULL )
-      if (!mqtt->isConnected()) {
+      if (!mqtt->isConnected() && (mqttRetry == 0 || mqttRetry < lastIsrAt - 10000)) {
         Serial.println("mqtt not connected.");
         // Close connection if exists
         network.stop();
         // Re-establish TCP connection with MQTT broker
         Serial.printf("Connecting to %d.%d.%d.%d on port %d\n", mqttBrokerIP[0], mqttBrokerIP[1], mqttBrokerIP[2], mqttBrokerIP[3], mqttBrokerPort );
-        network.connect(mqttBrokerIP, mqttBrokerPort);
-        if (!network.connected()) {
+        if (!network.connect(mqttBrokerIP, mqttBrokerPort)) {
           Serial.println("Can't establish the TCP connection. Trying to reconnect.");
+          mqttRetry = lastIsrAt;
         } else {
           Serial.println("Connection established.");
           // Start new MQTT connection
@@ -464,6 +465,7 @@ void WebUI::loop() {
               return;
             } else {
               Serial.println("MQTT Connection established.");
+              mqttRetry = 0;
               sendConfigMessage();
             }
           }
@@ -815,7 +817,7 @@ void WebUI::handleSetWiFiParams() {
 	  vTaskDelay(200 / portTICK_RATE_MS);
 	  delay(2000L);
 	  Serial.println(WiFi.status());
-	  connectWIFI(6, 5, credentialsChanged);
+	  connectWIFI(6, 10, credentialsChanged);
 	  if(!wifiAPmode)
 		ESP.restart();
   }

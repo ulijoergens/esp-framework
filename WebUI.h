@@ -129,6 +129,7 @@ class WebUI : public WebServer {
 	static char password[65];
 	static bool wifiTryReconnect;
 	static bool wifiAutoReconnect;
+	static int wifiConnectTimeout;
 	static bool wifiAPmode;
 	static int inSetup;
 	static int otaRunning;

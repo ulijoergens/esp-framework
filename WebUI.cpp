@@ -60,6 +60,7 @@ char WebUI::password[65];
 int WebUI::mqttRetry = 0;
 bool WebUI::wifiTryReconnect = true;
 bool WebUI::wifiAutoReconnect = true;
+int WebUI::wifiConnectTimeout = 20;
 bool WebUI::wifiAPmode;
 int WebUI::inSetup;
 int WebUI::otaRunning;
@@ -122,7 +123,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       Serial.println("Disconnected from WiFi access point");
-      connectWIFI(6, 10, false);
+      connectWIFI(6, wifiConnectTimeout, false);
       break;
     case SYSTEM_EVENT_STA_AUTHMODE_CHANGE:
       Serial.println("Authentication mode of access point has changed");
@@ -133,7 +134,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_LOST_IP:
       Serial.println("Lost IP address and IP address is reset to 0");
-      connectWIFI(6, 10,false);
+      connectWIFI(6, wifiConnectTimeout,false);
       break;
     case SYSTEM_EVENT_STA_WPS_ER_SUCCESS:
       Serial.println("WiFi Protected Setup (WPS): succeeded in enrollee mode");
@@ -283,7 +284,7 @@ void WebUI::setup() {
     startAP();
   } else {
     Serial.println("Found WLAN settings. Try connecting to " + (String) ssid + "." );
-    connectWIFI( 6, 10, false );
+    connectWIFI( 6, wifiConnectTimeout, false );
   }
 
 	ArduinoOTA
@@ -817,7 +818,7 @@ void WebUI::handleSetWiFiParams() {
 	  vTaskDelay(200 / portTICK_RATE_MS);
 	  delay(2000L);
 	  Serial.println(WiFi.status());
-	  connectWIFI(6, 10, credentialsChanged);
+	  connectWIFI(6, wifiConnectTimeout, credentialsChanged);
 	  if(!wifiAPmode)
 		ESP.restart();
   }

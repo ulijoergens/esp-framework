@@ -2,12 +2,12 @@
 #define _WebUI_h
 
 #include <stdint.h>
-#include "soc/timer_group_struct.h"
-#include "soc/timer_group_reg.h"
+//#include "soc/timer_group_struct.h"
+//#include "soc/timer_group_reg.h"
 
 #include <Esp.h>
 #include <Arduino.h>
-#include "WiFi.h"
+#include <WiFi.h>
 #include <cstdio>
 #include <WiFiClient.h>
 #include <WebServer.h>
@@ -39,9 +39,10 @@ typedef void (*TimerCbk)();
 class WebUI : public WebServer {
 	public:
 	WebUI(int port = 80){
+		instance = this;
 		wifiTryReconnect = false;
 		wifiAPmode = false;
-		inSetup = 1;
+		inSetup = true;
 		otaRunning = 0;
 		otaProgress = 0;
 		otaTotal = 0;
@@ -54,11 +55,13 @@ class WebUI : public WebServer {
 		interruptPin = 0;
 		interruptCounter = 0;
 		numberOfInterrupts = 0;
+		sleepmode = 0;
 		mqttBrokerPort = 1883;
+		int publishTimerPeriod = 1000;
 		int pubflag = 0;
 		timerCB = NULL;
-		uint32_t isrCounter = 0;
-		uint32_t lastIsrAt = 0;
+		uint64_t isrCounter = 0;
+		uint64_t lastIsrAt = 0;
 		mqttRetry = 0;
 		timerMux = portMUX_INITIALIZER_UNLOCKED;
 		mux = portMUX_INITIALIZER_UNLOCKED;
@@ -67,7 +70,7 @@ class WebUI : public WebServer {
 			menuUrls[i] = NULL;
 		}
 	};
-	void setup();
+	void setup(int newBackgroundPublishTask=1);
 	void loop();
 	static String title;
 	static void setTitle(String newTitle){
@@ -84,6 +87,21 @@ class WebUI : public WebServer {
 		server.on(uri, method, fn);
 	};
 	*/
+	static uint64_t getIsrCounter() {
+		return isrCounter;
+	}	
+	static void	setSleepmode(int newMode) {
+		sleepmode = newMode;
+	}
+	static int getSleepmode() {
+		return sleepmode;
+	}
+	static void setPublishTimerPeriod(int period) {
+		publishTimerPeriod = period;
+	}
+	static int getPublishTimerPeriod(){
+		return publishTimerPeriod;
+	}
 	static void setTimerCB(TimerCbk callback){
 		timerCB = callback;
 	};
@@ -104,7 +122,6 @@ class WebUI : public WebServer {
 	};
 
 	const char *getMqttid() {
-		Serial.printf("Get mqttid: %s\n",mqttid);
 			return( mqttid);
 	}
 
@@ -118,7 +135,11 @@ class WebUI : public WebServer {
 		}
 		return -1;
 	}
+	static void publishData( void * pvParameters );
+	static void print_wakeup_reason();
+
 	private:
+	static WebUI *instance;
 	static WebServer *server;
 	static DNSServer dnsServer;
 	static MqttClient *mqtt;
@@ -132,11 +153,13 @@ class WebUI : public WebServer {
 	static int wifiConnectTimeout;
 	static bool wifiAPmode;
 	static int inSetup;
+	static int webserverRunning;
+	static int startWebserver;
+    static esp_sleep_wakeup_cause_t wakeup_reason;
 	static int otaRunning;
 	static int otaProgress;
 	static int otaTotal;
 	static String otaMessage;
-
 	static IPAddress apIP;
 	static IPAddress mqttBrokerIP;
 	static int mqttBrokerPort;
@@ -146,6 +169,7 @@ class WebUI : public WebServer {
 #ifdef WEBUI_USE_BUILDIN_STATUS
 	static char MQTT_TOPIC_STATUS[64]; 
 #endif
+	static char MQTT_TOPIC_CONFIG_CMD[64];
 	static char MQTT_TOPIC_CONFIG_REQ[];
 	static char MQTT_TOPIC_CONFIG_RESP[];
 	static int pubflag;
@@ -157,10 +181,11 @@ class WebUI : public WebServer {
 	static volatile SemaphoreHandle_t timerSemaphore;
 	static portMUX_TYPE timerMux;
 	static portMUX_TYPE mux;
-
+	static int sleepmode;
+	static int backgroundPublishTask;
 	static volatile uint32_t isrCounter;
 	static volatile uint32_t lastIsrAt;
-
+	static int publishTimerPeriod;
 	static int firmwareMajor;
 	static int firmwareMinor;
 	static float batteryLevel;
@@ -189,6 +214,7 @@ class WebUI : public WebServer {
 	static void ESPrestart();
 	static void handleFwUpload();
 	static void startAP();
+	static void printWiFiStatus( wl_status_t wifistatus );
 	static void connectWIFI( int maxRetries, int connectionTimeout, bool credentialsChanged );
 	static void loadOldConfigFromEEPROM();
 	static void loadConfigFromEEPROM();
@@ -198,10 +224,11 @@ class WebUI : public WebServer {
 	static void checkInterrupt();
 	static void IRAM_ATTR handleInterrupt();
 	static void IRAM_ATTR onTimer();
-	static void publishData( void * pvParameters );
 	void mqttSubscribe();
+	void mqttConfigSubscribe();
 	void homieSubscribe();
 	static void processConfigRequest(MqttClient::MessageData & md);
+	static void processConfigCommand(MqttClient::MessageData & md);
 	static void sendConfigMessage();
 	static void homieDiscoveryHandler(MqttClient::MessageData & md);
 	static void homieSendDiscoveryResponse();

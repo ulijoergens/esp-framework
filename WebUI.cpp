@@ -1,5 +1,10 @@
 #include <WebUI.h>
 #include <skeleton.h>
+#include "soc/rtc.h"
+#include "esp_wifi.h"
+#include "esp_log.h"
+#include "esp_event.h"
+#include "esp_pm.h"
 
 const byte DNS_PORT = 53;
 
@@ -63,9 +68,19 @@ bool WebUI::wifiAutoReconnect = true;
 int WebUI::wifiConnectTimeout = 20;
 bool WebUI::wifiAPmode;
 int WebUI::inSetup;
+int WebUI::webserverRunning = false;
+int WebUI::startWebserver = false;
+
 int WebUI::otaRunning;
 int WebUI::otaProgress;
 int WebUI::otaTotal;
+int WebUI::publishTimerPeriod;
+int WebUI::backgroundPublishTask;
+int WebUI::sleepmode;
+esp_sleep_wakeup_cause_t WebUI::wakeup_reason;
+
+WebUI *WebUI::instance;
+
 String WebUI::otaMessage;
 String *WebUI::menuItems[10];
 String *WebUI::menuUrls[10];
@@ -76,6 +91,7 @@ int WebUI::mqttBrokerPort = 1883;
 #ifdef WEBUI_USE_BUILDIN_STATUS
 char WebUI::MQTT_TOPIC_STATUS[64]; 
 #endif
+char WebUI::MQTT_TOPIC_CONFIG_CMD[64]; 
 char WebUI::MQTT_TOPIC_CONFIG_REQ[] = "actors/config/request";
 char WebUI::MQTT_TOPIC_CONFIG_RESP[] = "actors/config/response";
 
@@ -123,7 +139,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       Serial.println("Disconnected from WiFi access point");
-      connectWIFI(6, wifiConnectTimeout, false);
+      //connectWIFI(6, wifiConnectTimeout, false);
       break;
     case SYSTEM_EVENT_STA_AUTHMODE_CHANGE:
       Serial.println("Authentication mode of access point has changed");
@@ -134,7 +150,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_STA_LOST_IP:
       Serial.println("Lost IP address and IP address is reset to 0");
-      connectWIFI(6, wifiConnectTimeout,false);
+      //connectWIFI(6, wifiConnectTimeout,false);
       break;
     case SYSTEM_EVENT_STA_WPS_ER_SUCCESS:
       Serial.println("WiFi Protected Setup (WPS): succeeded in enrollee mode");
@@ -190,6 +206,7 @@ void WebUI::WiFiEvent(WiFiEvent_t event)
 
 void WebUI::runWebserver( void * pvParameters ) {
   String taskMessage = "Starting webserver on core ";
+  webserverRunning = true;
   taskMessage = taskMessage + xPortGetCoreID();
   Serial.println(taskMessage);
 
@@ -256,7 +273,7 @@ void WebUI::runWebserver( void * pvParameters ) {
   Serial.println("HTTP server started");
 
 #if WEBSERVER_TASK_CORE == 0
-  while (true) {
+  while (!sleepmode){
     TIMG_WDT_WKEY_VALUE;
     TIMERG1.wdt_feed = 1;
     TIMERG1.wdt_wprotect = 0;
@@ -264,12 +281,22 @@ void WebUI::runWebserver( void * pvParameters ) {
     	server->handleClient();
     //delay(100);
     vTaskDelay(10 / portTICK_PERIOD_MS);
-  }
+  } 
 #endif
 }
 
-void WebUI::setup() {
-  Serial.begin(HW_UART_SPEED);
+void WebUI::setup(int newBackgroundPublishTask) {
+  backgroundPublishTask = newBackgroundPublishTask;
+//  Serial.begin(HW_UART_SPEED);
+  Serial.println("WebUI setup.");
+  inSetup = false;
+  print_wakeup_reason();
+  if(wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+	  Serial.println("Button pressed to discontinue sleep mode");
+	  sleepmode = 0;
+	  inSetup = true;
+	  startWebserver = true;
+  }
   chipid = ESP.getEfuseMac();
   pinMode(interruptPin, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING);
@@ -279,12 +306,34 @@ void WebUI::setup() {
   sprintf(MQTT_TOPIC_STATUS, "actors/%s-0/status", mqttid);
 #endif
   loadConfigFromEEPROM();
+  sprintf(MQTT_TOPIC_CONFIG_CMD, "node/%s-0/config", mqttid);
   if ( strlen(ssid) == 0 ) {
     Serial.println("No WLAN settings found. Start AP mode");
+	startWebserver = true;
     startAP();
   } else {
     Serial.println("Found WLAN settings. Try connecting to " + (String) ssid + "." );
-    connectWIFI( 6, wifiConnectTimeout, false );
+	Serial.print("WiFi power: ");
+	Serial.println(WiFi.getTxPower());
+	if(WiFi.setTxPower(WIFI_POWER_11dBm)) {
+		Serial.println("Tx power changed.");
+	} else {
+		Serial.println("Tx power not changed.");
+	}
+
+	if(WiFi.setTxPower(WIFI_POWER_MINUS_1dBm)) {
+		Serial.println("Tx power decreased.");
+	} else {
+		Serial.println("Tx power not decreased.");
+	}
+	Serial.print("WiFi power: ");
+	Serial.println(WiFi.getTxPower());
+	WiFi.mode(WIFI_STA );
+	esp_wifi_set_ps(WIFI_PS_NONE);
+	  WiFi.onEvent(WiFiEvent);
+	wl_status_t wifistatus = WiFi.begin ( ssid, password );
+	
+    // connectWIFI( 6, wifiConnectTimeout, false );
   }
 
 	ArduinoOTA
@@ -377,19 +426,7 @@ void WebUI::setup() {
     timerAlarmEnable(timer);
     server = this;
   if (!wifiAPmode) {
-#if WEBSERVER_TASK_CORE == 0
-    xTaskCreatePinnedToCore(
-      runWebserver,   /* Function to implement the task */
-      "Webserver", /* Name of the task */
-      10000,      /* Stack size in words */
-      NULL,       /* Task input parameter */
-      0,          /* Priority of the task */
-      NULL,       /* Task handle. */
-      0);  /* Core where the task should run */
-#else
-    runWebserver( NULL );
-#endif
-    // Setup MqttClient
+   // Setup MqttClient
     Serial.println("Setup MqttClient");
     MqttClient::System *mqttSystem = new System;
     MqttClient::Logger *mqttLogger = new MqttClient::LoggerImpl<HardwareSerial>(Serial);
@@ -411,9 +448,11 @@ void WebUI::setup() {
     );
     Serial.println("MqttClient Setup completed.");
   } else {
-    runWebserver( NULL );
+	  if(startWebserver && !webserverRunning)
+		runWebserver( NULL );
   }
 #ifdef WEBUI_USE_BUILDIN_STATUS
+if( backgroundPublishTask) {
   xTaskCreatePinnedToCore(
     publishData,   /* Function to implement the task */
     "publishData", /* Name of the task */
@@ -423,33 +462,36 @@ void WebUI::setup() {
     NULL,       /* Task handle. */
     0);  /* Core where the task should run */
 	Serial.println("Started data publishing task");
-#else
+} else {
 	Serial.println("Data publishing task not activated (set WEBUI_USE_BUILDIN_STATUS to activate)");
+}
 #endif
 }
 
 void WebUI::loop() {
-  if ( !inSetup && !wifiAPmode ) {
+
+  if ( !inSetup && !wifiAPmode && WiFi.status() == WL_CONNECTED) {
     // logfln("Check mqtt connection.");
     if (mqtt != NULL )
       if (!mqtt->isConnected() && (mqttRetry == 0 || mqttRetry < lastIsrAt - 10000)) {
-        Serial.println("mqtt not connected.");
+        //Serial.println("mqtt not connected.");
         // Close connection if exists
         network.stop();
         // Re-establish TCP connection with MQTT broker
-        Serial.printf("Connecting to %d.%d.%d.%d on port %d\n", mqttBrokerIP[0], mqttBrokerIP[1], mqttBrokerIP[2], mqttBrokerIP[3], mqttBrokerPort );
         if (!network.connect(mqttBrokerIP, mqttBrokerPort)) {
-          Serial.println("Can't establish the TCP connection. Trying to reconnect.");
+         Serial.printf("Can't establish the TCP connection to %d.%d.%d.%d on port %d\r\n", mqttBrokerIP[0], mqttBrokerIP[1], mqttBrokerIP[2], mqttBrokerIP[3], mqttBrokerPort );
+		 printWiFiStatus(WiFi.status());
+         Serial.println("Can't establish the TCP connection. Trying to reconnect.");
           mqttRetry = lastIsrAt;
         } else {
           Serial.println("Connection established.");
           // Start new MQTT connection
-          Serial.println("Prepare MQTT connection...");
+          Serial.println("Connection established. Connect to MQTT broker...");
           MqttClient::ConnectResult connectResult;
           // Connect
           {
             MQTTPacket_connectData options = MQTTPacket_connectData_initializer;
-            Serial.println("Set MQTT connection options...");
+//            Serial.println("Set MQTT connection options...");
             options.MQTTVersion = 4;
             options.clientID.cstring = mqttid;
             options.cleansession = true;
@@ -474,7 +516,8 @@ void WebUI::loop() {
             // Add subscribe here if required
             // Subscribe
         	mqttSubscribe();
-        	homieSubscribe();
+         	mqttConfigSubscribe();
+			homieSubscribe();
 			
 			if(subscribeCB) {
 				Serial.println("Now processing subscribe callback.");
@@ -482,10 +525,15 @@ void WebUI::loop() {
 			} else {
 				Serial.println("No subscribe callback registered.");
 			}
+			mqtt->yield(500L);
+
           } // end of subscribe block
 		}
       } else {
         {
+			if(!backgroundPublishTask) {
+				publishData((void *)NULL);
+			}
           // Add publish here if required
           // Publish
         }
@@ -495,9 +543,26 @@ void WebUI::loop() {
   if (wifiAPmode)
     dnsServer.processNextRequest();	
   checkInterrupt();
+  if( startWebserver && !webserverRunning && WiFi.status() == WL_CONNECTED){
+#if WEBSERVER_TASK_CORE == 0
+    xTaskCreatePinnedToCore(
+      runWebserver,   /* Function to implement the task */
+      "Webserver", /* Name of the task */
+      10000,      /* Stack size in words */
+      NULL,       /* Task input parameter */
+      0,          /* Priority of the task */
+      NULL,       /* Task handle. */
+      0);  /* Core where the task should run */
+#else
+    runWebserver( NULL );
+#endif
+ 	  
+  }
 #if WEBSERVER_TASK_CORE == 1
-//  if(!otaRunning)
+  if(webserverRunning) {
+//	Serial.println("server->handleClient()...");
   	server->handleClient();
+  }
 #endif
   if( otaRunning )
   	ArduinoOTA.handle();
@@ -609,11 +674,13 @@ void WebUI::handleRoot() {
   out +=       "dataType: 'json',";
   out +=       "url:'/getData',";
   out +=       "success:function(data) {\n";
+  out +=       "   days = Math.floor(data.isrcounter / 86400);";
+  out +=       "   data.isrcounter %= 86400;";
   out +=       "   hours = Math.floor(data.isrcounter / 3600);";
   out +=       "   data.isrcounter %= 3600;";
   out +=       "   minutes = Math.floor(data.isrcounter / 60);";
   out +=       "   seconds = data.isrcounter % 60;";
-  out +=       "   $('#uptime').html(hours+':'+minutes+':'+seconds);\n";
+  out +=       "   $('#uptime').html(days+'d '+hours+':'+minutes+':'+seconds);\n";
   out +=       "   $('#isrcounter').html(data.isrcounter );\n";
   out +=       "   $('#lastisrat').html(data.lastisrat);\n";
   out +=       "   $('#network').html(data.network ?\"Yes\":\"No\");\n";
@@ -639,14 +706,17 @@ void WebUI::handleRoot() {
   } else {
     out += "<tr><td>wifi connection:</td><td>" + String(ssid) + "</td></tr>";
   }
-  uint32_t time = isrCounter;
+  uint64_t time = isrCounter;
+  uint32_t d = time/86400;
+  time = time%86400;
   uint32_t h = time/3600;
   time = time%3600;
   uint32_t min = time/60;
   time = time%60;
   uint32_t sec = time;
 
-  out += "<tr><td>Uptime:</td><td id='uptime'>" + (String) h;
+  out += "<tr><td>Uptime:</td><td id='uptime'>" + (String) d;
+  out += "d " +(String) h;
   out += ":" + (String) min;
   out += ":" + (String) sec;
   out += "</td></tr>";
@@ -818,7 +888,8 @@ void WebUI::handleSetWiFiParams() {
 	  vTaskDelay(200 / portTICK_RATE_MS);
 	  delay(2000L);
 	  Serial.println(WiFi.status());
-	  connectWIFI(6, wifiConnectTimeout, credentialsChanged);
+	  WiFi.begin ( ssid, password );
+	  //connectWIFI(6, wifiConnectTimeout, credentialsChanged);
 	  if(!wifiAPmode)
 		ESP.restart();
   }
@@ -962,73 +1033,74 @@ void WebUI::startAP() {
   dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(DNS_PORT, "*", apIP);
 }
+void WebUI::printWiFiStatus( wl_status_t wifistatus ) {
+	switch( wifistatus ) {
+		case WL_IDLE_STATUS:
+			Serial.println("WL_IDLE_STATUS");
+			break;
+		case WL_NO_SSID_AVAIL:
+			Serial.println("WL_NO_SSID_AVAIL");
+			break;
+		case WL_SCAN_COMPLETED:
+			Serial.println("WL_SCAN_COMPLETED");
+			break;
+		case WL_CONNECTED:
+			Serial.println("WL_CONNECTED");
+			break;
+		case WL_CONNECT_FAILED:
+			Serial.println("WL_CONNECT_FAILED");
+			break;
+		case WL_CONNECTION_LOST:
+			Serial.println("WL_CONNECTION_LOST");
+			break;
+		case WL_DISCONNECTED:
+			Serial.println("WL_DISCONNECTED");
+			break;
+		case WL_NO_SHIELD:
+			Serial.println("WL_NO_SHIELD");
+			break;
+		default:
+			Serial.println("unknown WiFi return code.");
+			break;
+	}
+}
 
 void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentialsChanged ) {
 	  if ( wifiAPmode ) return;
 	  Serial.println("connectWIFI");
-//	  Serial.println(WiFi.status());
-//	  Serial.println(WL_CONNECTED);
-	  if(WiFi.status() == WL_CONNECTED)
-		  WiFi.disconnect();
+//	  WiFi.setSleepMode(WIFI_PS_NONE);
+	WiFi.mode(WIFI_STA );
+	wl_status_t wifistatus = WiFi.status();
+//	  if(WiFi.status() == WL_CONNECTED)
+//		  WiFi.disconnect();
 	  WiFi.onEvent(WiFiEvent);
 	  int retries = 0;
-	  do {
+	  while( (retries < maxRetries) && wifistatus != WL_CONNECTED && !wifiAPmode ) {
+		Serial.print ( "Connecting to " );
+		Serial.println ( ssid );
+		Serial.print ( "PW: " );
+		Serial.println ( password );
 		Serial.println("WiFi.begin()");
 		//    Serial.println("WiFi.disconnect()");
 		//    WiFi.disconnect(true);
+		esp_wifi_set_ps(WIFI_PS_NONE);
 		wl_status_t wifistatus = WiFi.begin ( ssid, password );
-
-		if( wifistatus ) {
-		  wifiAPmode = false;
-		  Serial.print ( "Connecting to " );
-		  Serial.println ( ssid );
+			delay ( 1000 );
 
 		  // Wait for connection
-		  for( int i = 0; wifistatus != WL_CONNECTED && wifistatus != WL_NO_SHIELD && i < connectionTimeout && !wifiAPmode; i++ ) {
-			  wifistatus = WiFi.status();
-				switch( wifistatus ) {
-				case WL_IDLE_STATUS:
-					Serial.println("WL_IDLE_STATUS");
-					break;
-				case WL_NO_SSID_AVAIL:
-					Serial.println("WL_NO_SSID_AVAIL");
-					break;
-				case WL_SCAN_COMPLETED:
-					Serial.println("WL_SCAN_COMPLETED");
-					break;
-				case WL_CONNECTED:
-					Serial.println("WL_CONNECTED");
-					break;
-				case WL_CONNECT_FAILED:
-					Serial.println("WL_CONNECT_FAILED");
-					break;
-				case WL_CONNECTION_LOST:
-					Serial.println("WL_CONNECTION_LOST");
-					break;
-				case WL_DISCONNECTED:
-					Serial.println("WL_DISCONNECTED");
-					break;
-				case WL_NO_SHIELD:
-					Serial.println("WL_NO_SHIELD");
-					break;
-				default:
-					Serial.println("unknown WiFi return code.");
-					break;
-				}
+		for( int i = 0; wifistatus != WL_CONNECTED && wifistatus != WL_NO_SHIELD && i < connectionTimeout && !wifiAPmode; i++ ) {
+			wifistatus = WiFi.status();
+			if( wifistatus != WL_DISCONNECTED && wifistatus != WL_CONNECTED )
+				printWiFiStatus( wifistatus );
 			checkInterrupt();
 			//vTaskDelay(1000 / portTICK_RATE_MS);
 			delay ( 1000 );
 			Serial.print ( "." );
 		  }
-		} else {
-		  Serial.print( "Connecting to ");
-		  Serial.print( ssid );
-		  Serial.print( " failed with error code " );
-		  Serial.println(wifistatus);
-		}
+
 		if(!wifiAutoReconnect)
 			retries++;
-	  } while( (retries < maxRetries) && WiFi.status() != WL_CONNECTED && !wifiAPmode );
+		} 
 
 	  if ( WiFi.status() == WL_CONNECTED ) {
 		Serial.println( "" );
@@ -1036,7 +1108,8 @@ void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentials
 		Serial.println( WiFi.localIP() );
 		if( credentialsChanged )
 			saveConfig();
-		inSetup = 0;
+		if(wakeup_reason != ESP_SLEEP_WAKEUP_EXT0)
+			inSetup = 0;
 	  } else {
 		Serial.printf( "Connection to %s timed out.\n", ssid );
 		Serial.println( " timed out." );
@@ -1248,13 +1321,15 @@ String WebUI::toStringIp(IPAddress ip) {
 }
 
 void WebUI::checkInterrupt() {
+	if(sleepmode)
+		return;
   if (interruptCounter > 0) {
     portENTER_CRITICAL(&mux);
     interruptCounter--;
     portEXIT_CRITICAL(&mux);
     Serial.println("Button pressed, interrupt triggered!");
 	inSetup = true;
-    startAP();
+	startAP();
   }
 }
 
@@ -1280,7 +1355,9 @@ void IRAM_ATTR WebUI::onTimer() {
 
 #ifdef WEBUI_USE_BUILDIN_STATUS
 void WebUI::publishData( void * pvParameters ) {
-  while (true) {
+	if(inSetup)
+		return;
+  do {
     if ( mqtt != NULL && !otaRunning )
       if ( !wifiAPmode && !inSetup && mqtt->isConnected()) {
         char pubbuf[128] = "";
@@ -1302,15 +1379,137 @@ void WebUI::publishData( void * pvParameters ) {
         pubflag = 0;
         // Idle for 30 seconds
         mqtt->yield(500L);
-      } else {
+		esp_err_t err = 0;
+		Serial.print("Data published now going to sleep mode ");
+		Serial.print(sleepmode);
+		Serial.print(" for ");
+		Serial.print(publishTimerPeriod);
+		Serial.println(" ms.");
+		//vTaskDelay(1 / portTICK_PERIOD_MS);	
+		Serial.print("RTC: ");
+		uint64_t rtcval = rtc_time_get();
+		Serial.println((long) rtcval);
+		switch( sleepmode ) {
+			case 1:
+/* 			  WiFi.disconnect();
+			  WiFi.mode(WIFI_OFF); 
+ 			  btStop();
+			  mqtt->disconnect();
+			  network.stop();
+ */			  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+			  err = esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, LOW);
+/*			  Serial.print("esp_sleep_enable_ext0_wakeup returns: ");
+			  Serial.println(err);
+ */			  err = esp_sleep_enable_timer_wakeup(publishTimerPeriod *1000);
+/* 			  Serial.print("esp_sleep_enable_timer_wakeup returns: ");
+			  Serial.println(err);
+ */			  err = esp_light_sleep_start();
+/* 			  Serial.print("esp_light_sleep_start returns: ");
+			  Serial.println(err);
+			  
+ */			  esp_wifi_set_ps(WIFI_PS_NONE);
+			  print_wakeup_reason();
+// 			  btStart();
+//			  connectWIFI( 6, wifiConnectTimeout, false );
+			  if(esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+				  Serial.println("Button pressed to discontinue sleep mode");
+				  sleepmode = 0;
+				  inSetup = true;
+				  WebUI::instance->runWebserver( NULL );
+			  }
+			  break;
+			case 2:
+			  WiFi.disconnect();
+			  WiFi.mode(WIFI_OFF); 
+ 			  btStop();
+			  mqtt->disconnect();
+			  network.stop();
+			  err = esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, LOW);
+			  err = esp_sleep_enable_timer_wakeup(publishTimerPeriod *1000);
+			  Serial.print("esp_sleep_enable_timer_wakeup returns: ");
+			  Serial.println(err);
+			  esp_deep_sleep_start();
+			  print_wakeup_reason();
+			  break;
+			
+			default :
+				vTaskDelay(publishTimerPeriod / portTICK_PERIOD_MS);			
+		}
+     } else {
         // Serial.println("Publish: wait for connection to mqtt broker.");
       }
 	  
 //	  Serial.println("Callbacks processed.");
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-  }
+	
+  } while (backgroundPublishTask);
 }
 #endif
+
+void WebUI::print_wakeup_reason(){
+
+  wakeup_reason = esp_sleep_get_wakeup_cause();
+
+  switch(wakeup_reason){
+    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+  }
+}
+
+void WebUI::processConfigCommand(MqttClient::MessageData & md) {
+  Serial.println("processConfigCommand callback triggered.");
+  const MqttClient::Message& msg = md.message;
+  StaticJsonDocument<200> jsonBuffer;
+  static char payload[BUF_MAX];
+  memcpy(payload, msg.payload, msg.payloadLen);
+  payload[msg.payloadLen] = '\0';
+  logfln(
+    "Message arrived: qos %d, retained %d, dup %d, packetid %d, payload:[%s]",
+    msg.qos, msg.retained, msg.dup, msg.id, payload
+  );
+  deserializeJson(jsonBuffer, payload);
+  JsonObject root = jsonBuffer.as<JsonObject>();
+  if( root["sleep"] ) {
+	  Serial.print("Sleep mode: ");
+	  Serial.println((int) root["sleep"]);
+	  sleepmode = root["sleep"];
+  }
+  if( root["period"] ) {
+	  Serial.print("Period: ");
+	  Serial.println((int) root["period"]);
+	  publishTimerPeriod = root["period"];
+  }
+  if( root["web"] ) {
+	  startWebserver = (strcmp(root["web"], "on")== 0);
+	  if(startWebserver) {
+		  sleepmode = 0;
+	  }
+  }
+  
+  if( root["setup"] ) {
+	  inSetup = (strcmp(root["setup"], "on")== 0);
+	  if(inSetup) {
+		  sleepmode = 0;
+		  startWebserver = true;
+	  }
+  }
+  
+  
+  Serial.print("web: ");
+  Serial.println(startWebserver);
+  Serial.print("setup: ");
+  Serial.println(inSetup);
+  Serial.print("sleep mode: ");
+  Serial.println(sleepmode);
+  Serial.print("sleep period: ");
+  Serial.println(publishTimerPeriod);
+  
+  // LOG_PRINTFLN( "Message parsed: %d, %d, %d", channel, value, timer );
+}
+
 
 void WebUI::processConfigRequest(MqttClient::MessageData & md) {
   Serial.println("processConfigRequest callback triggered.");
@@ -1355,6 +1554,21 @@ void WebUI::setPublishCB(PublishHandlerCbk cb){
 SubscribeHandlerCbk WebUI::subscribeCB;
 void WebUI::setSubscribeCB(SubscribeHandlerCbk cb){
 	subscribeCB = cb;
+}
+
+void WebUI::mqttConfigSubscribe() {
+    logfln("Subscribe to %s", MQTT_TOPIC_CONFIG_CMD);
+    MqttClient::Error::type rc = mqtt->subscribe(
+                                   MQTT_TOPIC_CONFIG_CMD, MqttClient::QOS0, processConfigCommand
+                                 );
+    if (rc != MqttClient::Error::SUCCESS) {
+      logfln("Subscribe error: %i", rc);
+      Serial.println("Drop connection");
+      mqtt->disconnect();
+      return;
+    } else {
+      logfln("Subscribtion to %s successful.", MQTT_TOPIC_CONFIG_CMD);
+    }
 }
 
 void WebUI::mqttSubscribe() {

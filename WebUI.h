@@ -30,9 +30,10 @@
 #define WEBSERVER_TASK_CORE 1
 
 #define WEBUI_USE_BUILDIN_STATUS 1
+
 typedef int (*loadConfigCbk)(int eeAddress, int major, int minor);
 typedef int (*saveConfigCbk)(int eeAddress);
-typedef void (*PublishHandlerCbk)();
+typedef void (*PublishHandlerCbk)(void *pvParameters);
 typedef void (*SubscribeHandlerCbk)();
 typedef void (*TimerCbk)();
 
@@ -55,6 +56,7 @@ class WebUI : public WebServer {
 		interruptPin = 0;
 		interruptCounter = 0;
 		numberOfInterrupts = 0;
+		publishingTimerActive = false;
 		sleepmode = 0;
 		mqttBrokerPort = 1883;
 		int publishTimerPeriod = 1000;
@@ -72,6 +74,20 @@ class WebUI : public WebServer {
 	};
 	void setup(int newBackgroundPublishTask=1);
 	void loop();
+	wl_status_t wifiStatus() {
+		return WiFi.status();
+	}
+	String wifiSSID() {
+		return ssid;
+	}
+	int mqttConnected() {
+		if( mqtt )
+			return mqtt->isConnected();
+		return false;
+	}
+	IPAddress mqttBroker() {
+		return mqttBrokerIP;
+	}
 	static String title;
 	static void setTitle(String newTitle){
 		title = newTitle;
@@ -112,6 +128,10 @@ class WebUI : public WebServer {
 		loadConfigCB = cb;
 	}
 	static void saveConfig();
+	void startBackgroundPublishTask();
+	void stopBackgroundPublishTask();
+	void initMQTT();
+	void connectMQTT();
 	static void setSubscribeCB(SubscribeHandlerCbk);
 	static void setPublishCB(PublishHandlerCbk);
 	static MqttClient::Error::type publish(const char* topic, MqttClient::Message& message) {
@@ -183,6 +203,9 @@ class WebUI : public WebServer {
 	static portMUX_TYPE mux;
 	static int sleepmode;
 	static int backgroundPublishTask;
+	static TaskHandle_t publishTaskHandle;
+	static TaskHandle_t webserverTaskHandle;
+	static int publishingTimerActive;
 	static volatile uint32_t isrCounter;
 	static volatile uint32_t lastIsrAt;
 	static int publishTimerPeriod;

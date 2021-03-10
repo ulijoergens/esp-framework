@@ -484,6 +484,7 @@ void WebUI::connectMQTT() {
 		 printWiFiStatus(WiFi.status());
          Serial.println("Can't establish the TCP connection. Trying to reconnect.");
           mqttRetry = lastIsrAt;
+		  return;
         } else {
           Serial.println("Connection established.");
           // Start new MQTT connection
@@ -505,6 +506,7 @@ void WebUI::connectMQTT() {
             Serial.println("Establish MQTT connection...");
             MqttClient::Error::type rc = mqtt->connect(options, connectResult);
             if (rc != MqttClient::Error::SUCCESS) {
+			  mqttRetry = lastIsrAt;
               logfln("MQTT Connection error: %i", rc);
               return;
             } else {
@@ -1445,26 +1447,12 @@ void WebUI::publishData( void * pvParameters ) {
 		Serial.flush();
 		switch( sleepmode ) {
 			case 1:
-/* 			  WiFi.disconnect();
-			  WiFi.mode(WIFI_OFF); 
- 			  btStop();
-			  mqtt->disconnect();
-			  network.stop();
- */			  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+			  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 			  err = esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, LOW);
-/*			  Serial.print("esp_sleep_enable_ext0_wakeup returns: ");
-			  Serial.println(err);
- */			  err = esp_sleep_enable_timer_wakeup(publishTimerPeriod *1000);
-/* 			  Serial.print("esp_sleep_enable_timer_wakeup returns: ");
-			  Serial.println(err);
- */			  err = esp_light_sleep_start();
-/* 			  Serial.print("esp_light_sleep_start returns: ");
-			  Serial.println(err);
-			  
- */			  esp_wifi_set_ps(WIFI_PS_NONE);
+			  err = esp_sleep_enable_timer_wakeup(publishTimerPeriod *1000);
+			  err = esp_light_sleep_start();
+			  esp_wifi_set_ps(WIFI_PS_NONE);
 			  print_wakeup_reason();
-// 			  btStart();
-//			  connectWIFI( 6, wifiConnectTimeout, false );
 			  if(esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
 				  Serial.println("Button pressed to discontinue sleep mode");
 				  sleepmode = 0;

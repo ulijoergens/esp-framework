@@ -316,25 +316,9 @@ void WebUI::setup(int newBackgroundPublishTask) {
     startAP();
   } else {
     Serial.println("Found WLAN settings. Try connecting to " + (String) ssid + " with pw " + password + "." );
-/*	Serial.print("WiFi power: ");
-	Serial.println(WiFi.getTxPower());
-	if(WiFi.setTxPower(WIFI_POWER_11dBm)) {
-		Serial.println("Tx power changed.");
-	} else {
-		Serial.println("Tx power not changed.");
-	}
-
-	if(WiFi.setTxPower(WIFI_POWER_MINUS_1dBm)) {
-		Serial.println("Tx power decreased.");
-	} else {
-		Serial.println("Tx power not decreased.");
-	}
-	Serial.print("WiFi power: ");
-	Serial.println(WiFi.getTxPower());
-	*/
 	WiFi.mode(WIFI_STA );
 	esp_wifi_set_ps(WIFI_PS_NONE);
-	  WiFi.onEvent(WiFiEvent);
+	WiFi.onEvent(WiFiEvent);
 	WiFi.setAutoReconnect(true);
 	wl_status_t wifistatus = WiFi.begin ( ssid, password );
     // connectWIFI( 6, wifiConnectTimeout, false );
@@ -1116,6 +1100,7 @@ void WebUI::printWiFiStatus( wl_status_t wifistatus ) {
 	}
 }
 
+/*
 void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentialsChanged ) {
 	  if ( wifiAPmode ) return;
 	  Serial.println("connectWIFI");
@@ -1169,7 +1154,7 @@ void WebUI::connectWIFI( int maxRetries, int connectionTimeout, bool credentials
 	  }
 	  Serial.println("connectWIFI done.");
 }
-
+*/
 /** Load config like WLAN credentials from EEPROM */
 
 void WebUI::loadOldConfigFromEEPROM() {
